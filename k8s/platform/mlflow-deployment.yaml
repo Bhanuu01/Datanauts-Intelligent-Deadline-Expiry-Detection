@@ -26,8 +26,13 @@ spec:
           ports:
             - containerPort: 5000
           env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: POSTGRES_PASSWORD
             - name: MLFLOW_BACKEND_STORE_URI
-              value: postgresql://mlflow:$(POSTGRES_PASSWORD)@mlflow-postgres:5432/mlflow
+              value: "postgresql://mlflow:mlflowpass123@mlflow-postgres:5432/mlflow"
             - name: MLFLOW_DEFAULT_ARTIFACT_ROOT
               value: s3://mlflow/
             - name: MLFLOW_S3_ENDPOINT_URL
@@ -39,11 +44,6 @@ spec:
                 secretKeyRef:
                   name: platform-secrets
                   key: MINIO_ROOT_PASSWORD
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: platform-secrets
-                  key: POSTGRES_PASSWORD
           command:
             - mlflow
             - server
