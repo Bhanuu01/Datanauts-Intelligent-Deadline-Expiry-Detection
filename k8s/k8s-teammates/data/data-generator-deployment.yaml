@@ -1,0 +1,32 @@
+# Continuously generates synthetic documents
+# Build image from: github.com/tanvitakavane/datanauts-mlops-pipeline_data_team/data_generator/Dockerfile
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-generator
+  namespace: data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-generator
+  template:
+    metadata:
+      labels:
+        app: data-generator
+    spec:
+      containers:
+        - name: data-generator
+          image: tanvitakavane/data-generator:latest
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          env:
+            - name: PAPERLESS_URL
+              value: http://paperless-ngx.paperless.svc.cluster.local:8000
+            - name: PYTHONUNBUFFERED
+              value: "1"

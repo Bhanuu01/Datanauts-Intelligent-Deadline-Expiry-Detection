@@ -1,0 +1,38 @@
+# FastAPI feature extraction service — port 8000
+# Build image from: github.com/tanvitakavane/datanauts-mlops-pipeline_data_team/online_features/Dockerfile
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: online-features
+  namespace: data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: online-features
+  template:
+    metadata:
+      labels:
+        app: online-features
+    spec:
+      containers:
+        - name: online-features
+          image: tanvitakavane/online-features:latest
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15

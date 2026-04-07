@@ -1,0 +1,44 @@
+# FastAPI ONNX quantized inference server — port 8004
+# Build image from: github.com/tanish-tc/flops/Dockerfile.onnx_quant
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: onnx-inference
+  namespace: serving
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: onnx-inference
+  template:
+    metadata:
+      labels:
+        app: onnx-inference
+    spec:
+      containers:
+        - name: onnx-inference
+          image: tanish-tc/onnx-inference:latest
+          ports:
+            - containerPort: 8004
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.platform.svc.cluster.local:5000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 20
+            periodSeconds: 10

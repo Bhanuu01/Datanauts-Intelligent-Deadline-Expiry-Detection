@@ -1,0 +1,30 @@
+# ML data pipeline — runs shell script every hour at :30
+# Build image from: github.com/tanvitakavane/datanauts-mlops-pipeline_data_team/pipeline/Dockerfile
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ml-pipeline
+  namespace: data
+spec:
+  schedule: "30 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: ml-pipeline
+              image: tanvitakavane/ml-pipeline:latest
+              command: ["bash", "scripts/run_pipeline.sh"]
+              resources:
+                requests:
+                  cpu: "200m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "1000m"
+                  memory: "512Mi"
+              env:
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+                - name: MLFLOW_TRACKING_URI
+                  value: http://mlflow.platform.svc.cluster.local:5000

@@ -1,0 +1,44 @@
+# Runs train_classifier.py once and exits (K8s Job)
+# Build image from: github.com/Bhanuu01/Intelligent-Deadline-Expiry-Detection-System/Dockerfile
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: classifier-training
+  namespace: training
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: classifier-training
+          image: bhanuu01/deadline-training:latest
+          command: ["python", "src/train_classifier.py", "--model", "roberta_clf_v1"]
+          resources:
+            requests:
+              cpu: "2000m"
+              memory: "4Gi"
+            limits:
+              cpu: "4000m"
+              memory: "8Gi"
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.platform.svc.cluster.local:5000
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: http://minio.platform.svc.cluster.local:9000
+            - name: AWS_ACCESS_KEY_ID
+              value: mlflow
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: GIT_PYTHON_REFRESH
+              value: quiet
+          volumeMounts:
+            - name: model-storage
+              mountPath: /app/models
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: model-storage-pvc

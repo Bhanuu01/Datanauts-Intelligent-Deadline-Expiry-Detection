@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: onnx-inference
+  namespace: serving
+spec:
+  type: NodePort
+  selector:
+    app: onnx-inference
+  ports:
+    - port: 8004
+      targetPort: 8004
+      nodePort: 30804

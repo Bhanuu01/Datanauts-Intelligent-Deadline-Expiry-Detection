@@ -1,0 +1,27 @@
+# Ray hyperparameter tuning job
+# Build image from: github.com/Bhanuu01/Intelligent-Deadline-Expiry-Detection-System/Dockerfile.ray
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ray-tune
+  namespace: training
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: ray-tune
+          image: bhanuu01/deadline-training-ray:latest
+          resources:
+            requests:
+              cpu: "2000m"
+              memory: "4Gi"
+            limits:
+              cpu: "4000m"
+              memory: "8Gi"
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.platform.svc.cluster.local:5000
+            - name: GIT_PYTHON_REFRESH
+              value: quiet

@@ -1,0 +1,29 @@
+# Batch pipeline — runs hourly
+# Build image from: github.com/tanvitakavane/datanauts-mlops-pipeline_data_team/batch_pipeline/Dockerfile
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: batch-pipeline
+  namespace: data
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: batch-pipeline
+              image: tanvitakavane/batch-pipeline:latest
+              resources:
+                requests:
+                  cpu: "200m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "1000m"
+                  memory: "512Mi"
+              env:
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+                - name: PAPERLESS_URL
+                  value: http://paperless-ngx.paperless.svc.cluster.local:8000
