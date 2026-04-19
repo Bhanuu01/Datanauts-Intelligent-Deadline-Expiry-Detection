@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  batch-pipeline:
+    build: .
+    environment:
+      - BUCKET_NAME=cuad-data-proj11-v2
+      - OS_AUTH_TYPE=${OS_AUTH_TYPE}
+      - OS_AUTH_URL=${OS_AUTH_URL}
+      - OS_IDENTITY_API_VERSION=${OS_IDENTITY_API_VERSION}
+      - OS_REGION_NAME=${OS_REGION_NAME}
+      - OS_INTERFACE=${OS_INTERFACE}
+      - OS_APPLICATION_CREDENTIAL_ID=${OS_APPLICATION_CREDENTIAL_ID}
+      - OS_APPLICATION_CREDENTIAL_SECRET=${OS_APPLICATION_CREDENTIAL_SECRET}
+    volumes:
+      - ./data:/data
+      - ./output:/output
