@@ -1,0 +1,67 @@
+{
+  "model": "deadline-ner (dslim/bert-base-NER fine-tuned)",
+  "task": "token_classification",
+  "label_schema": ["O","B-EXP_DATE","I-EXP_DATE","B-START_DATE","I-START_DATE","B-DURATION","I-DURATION"],
+  "examples": [
+    {
+      "id": "ner-001",
+      "description": "Explicit expiration date — month + day + year",
+      "input": {
+        "sentence": "This Agreement shall expire on December 31, 2025, unless terminated earlier by either party.",
+        "tokens": ["This","Agreement","shall","expire","on","December","31,","2025,","unless","terminated","earlier","by","either","party."]
+      },
+      "output": {
+        "tokens":    ["This","Agreement","shall","expire","on","December","31,","2025,","unless","terminated","earlier","by","either","party."],
+        "ner_labels":["O",   "O",         "O",    "O",     "O","B-EXP_DATE","I-EXP_DATE","I-EXP_DATE","O",     "O",           "O",      "O", "O",     "O"],
+        "entities": [
+          {
+            "text": "December 31, 2025,",
+            "type": "EXP_DATE",
+            "token_start": 5,
+            "token_end": 7
+          }
+        ]
+      }
+    },
+    {
+      "id": "ner-002",
+      "description": "Duration-based deadline — computable from start date",
+      "input": {
+        "sentence": "The initial term of this Agreement shall be three years from the Effective Date.",
+        "tokens": ["The","initial","term","of","this","Agreement","shall","be","three","years","from","the","Effective","Date."]
+      },
+      "output": {
+        "tokens":    ["The","initial","term","of","this","Agreement","shall","be","three",    "years",     "from","the","Effective","Date."],
+        "ner_labels":["O",  "O",      "O",   "O","O",   "O",         "O",   "O","B-DURATION","I-DURATION","O",  "O", "O",         "O"],
+        "entities": [
+          {
+            "text": "three years",
+            "type": "DURATION",
+            "token_start": 8,
+            "token_end": 9
+          }
+        ]
+      }
+    },
+    {
+      "id": "ner-003",
+      "description": "Effective start date present in contract clause",
+      "input": {
+        "sentence": "This Agreement is effective as of January 1, 2023 and continues until further notice.",
+        "tokens": ["This","Agreement","is","effective","as","of","January","1,","2023","and","continues","until","further","notice."]
+      },
+      "output": {
+        "tokens":    ["This","Agreement","is","effective","as","of","January",     "1,",          "2023",        "and","continues","until","further","notice."],
+        "ner_labels":["O",   "O",        "O","O",         "O","O", "B-START_DATE","I-START_DATE","I-START_DATE","O",  "O",        "O",   "O",      "O"],
+        "entities": [
+          {
+            "text": "January 1, 2023",
+            "type": "START_DATE",
+            "token_start": 6,
+            "token_end": 8
+          }
+        ]
+      }
+    }
+  ]
+}

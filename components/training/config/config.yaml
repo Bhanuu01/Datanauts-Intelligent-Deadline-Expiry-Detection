@@ -1,0 +1,33 @@
+model:
+  name: "bert_ner_v5"
+  base_model: "dslim/bert-base-NER"
+  num_labels: 7  # O B-EXP_DATE I-EXP_DATE B-START_DATE I-START_DATE B-DURATION I-DURATION
+
+classifier:
+  name: "roberta_clf_v5"
+  base_model: "roberta-base"
+  num_labels: 4  # none expiration effective renewal
+  label_schema: "none|expiration|effective|renewal"
+  none_ratio: 10  # downsample none class to 10x positives
+  focal_loss: false  # set true for roberta_clf_v6
+
+data:
+  dataset: "tanvitakavane/datanauts_project_cuad-deadline-ner-version2"
+  sentence_data_path: "./data/deadline_sentences"
+  max_seq_length: 256
+  seed: 42
+  # Splits are contract-level (373 train / 68 val / 69 test) — do NOT reshuffle
+
+training:
+  epochs: 3
+  batch_size: 16
+  learning_rate: 2e-5
+  weight_decay: 0.01
+  warmup_steps: 50
+  fp16: true
+
+mlflow:
+  tracking_uri: "http://129.114.27.190:8000"
+  s3_endpoint: "http://129.114.27.190:9000"
+  experiment_ner: "deadline-detection-ner"
+  experiment_clf: "deadline-detection-classifier"

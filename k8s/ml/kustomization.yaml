@@ -1,0 +1,12 @@
+resources:
+  - ../namespace-ml.yaml
+  - model-storage-pvc.yaml
+  - online-features-deployment.yaml
+  - online-features-service.yaml
+  - inference-deployment.yaml
+  - inference-service.yaml
+  - inference-hpa.yaml
+  - retrain-pipeline-cronjob.yaml
+  - model-promotion-cronjob.yaml
+  - data-quality-cronjob.yaml
+  - drift-monitor-cronjob.yaml

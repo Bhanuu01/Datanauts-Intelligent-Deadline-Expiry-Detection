@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: model-promotion-gate
+  namespace: ml
+spec:
+  schedule: "15 3 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: model-promotion-gate
+              image: ghcr.io/bhanuu01/datanauts-platform-automation:latest
+              command: ["python", "/app/components/platform_automation/evaluate_and_promote.py"]
+              env:
+                - name: EVALUATION_METRICS_PATH
+                  value: /data/evaluation_metrics.json
+                - name: PROMOTION_DECISION_PATH
+                  value: /data/promotion_decision.json
+                - name: MAX_LATENCY_P95_MS
+                  value: "500"
+              resources:
+                requests:
+                  cpu: "250m"
+                  memory: "512Mi"
+                limits:
+                  cpu: "1000m"
+                  memory: "1Gi"
+              volumeMounts:
+                - name: promotion-data
+                  mountPath: /data
+          volumes:
+            - name: promotion-data
+              persistentVolumeClaim:
+                claimName: model-storage-pvc

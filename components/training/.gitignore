@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+data/
+outputs/
+.env
+*.egg-info/
+.DS_Store
+mlflow.db
+mlruns/
+training_runs*.md
+*.cast

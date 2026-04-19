@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: online-features
+  namespace: ml
+spec:
+  selector:
+    app: online-features
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
