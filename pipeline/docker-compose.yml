@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  ingest-pipeline:
+    build: .
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - OS_AUTH_URL=${OS_AUTH_URL}
+      - OS_AUTH_TYPE=v3applicationcredential
+      - OS_APPLICATION_CREDENTIAL_ID=${OS_APPLICATION_CREDENTIAL_ID}
+      - OS_APPLICATION_CREDENTIAL_SECRET=${OS_APPLICATION_CREDENTIAL_SECRET}
+      - OS_REGION_NAME=${OS_REGION_NAME:-CHI@TACC}
+      - BUCKET_NAME=cuad-data-proj11
+    volumes:
+      - ./output:/app/output
