@@ -1,0 +1,109 @@
+{
+  "model": "deadline-classifier (roberta-base fine-tuned)",
+  "task": "sequence_classification",
+  "label_schema": {
+    "0": "none",
+    "1": "expiration",
+    "2": "effective",
+    "3": "renewal"
+  },
+  "label_descriptions": {
+    "none": "Sentence contains no deadline or date-related information",
+    "expiration": "Sentence describes an expiration or termination clause (explicit date or duration-based)",
+    "effective": "Sentence describes the effective date or start date of the agreement",
+    "renewal": "Sentence describes an automatic renewal or extension clause"
+  },
+  "note": "deadline_type (explicit vs computable) is derived downstream from NER output — EXP_DATE found → explicit, DURATION found → computable",
+  "examples": [
+    {
+      "id": "clf-001",
+      "description": "Expiration — explicit date stated directly",
+      "input": {
+        "sentence": "This Agreement shall expire on December 31, 2025, unless terminated earlier by either party."
+      },
+      "output": {
+        "predicted_label": "expiration",
+        "predicted_label_id": 1,
+        "confidence": 0.93,
+        "scores": {
+          "none": 0.02,
+          "expiration": 0.93,
+          "effective": 0.03,
+          "renewal": 0.02
+        }
+      }
+    },
+    {
+      "id": "clf-002",
+      "description": "Expiration — computable (duration from effective date, no explicit date)",
+      "input": {
+        "sentence": "The initial term of this Agreement shall be three years from the Effective Date."
+      },
+      "output": {
+        "predicted_label": "expiration",
+        "predicted_label_id": 1,
+        "confidence": 0.87,
+        "scores": {
+          "none": 0.03,
+          "expiration": 0.87,
+          "effective": 0.07,
+          "renewal": 0.03
+        }
+      }
+    },
+    {
+      "id": "clf-003",
+      "description": "Effective — agreement start / execution date",
+      "input": {
+        "sentence": "This Agreement shall be effective as of January 1, 2024, upon execution by both parties."
+      },
+      "output": {
+        "predicted_label": "effective",
+        "predicted_label_id": 2,
+        "confidence": 0.91,
+        "scores": {
+          "none": 0.03,
+          "expiration": 0.04,
+          "effective": 0.91,
+          "renewal": 0.02
+        }
+      }
+    },
+    {
+      "id": "clf-004",
+      "description": "Renewal — automatic extension clause",
+      "input": {
+        "sentence": "The Agreement shall automatically renew for successive one-year terms unless either party provides written notice of termination."
+      },
+      "output": {
+        "predicted_label": "renewal",
+        "predicted_label_id": 3,
+        "confidence": 0.89,
+        "scores": {
+          "none": 0.03,
+          "expiration": 0.04,
+          "effective": 0.04,
+          "renewal": 0.89
+        }
+      }
+    },
+    {
+      "id": "clf-005",
+      "description": "None — boilerplate contract language, no deadline",
+      "input": {
+        "sentence": "Each party agrees to keep confidential all proprietary information disclosed under this Agreement."
+      },
+      "output": {
+        "predicted_label": "none",
+        "predicted_label_id": 0,
+        "confidence": 0.97,
+        "scores": {
+          "none": 0.97,
+          "expiration": 0.01,
+          "effective": 0.01,
+          "renewal": 0.01
+        }
+      }
+    }
+  ]
+}

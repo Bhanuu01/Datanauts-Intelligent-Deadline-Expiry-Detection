@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  ingest-pipeline:
+    build: .
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_REPO=tanvitakavane/datanauts_project_cuad-deadline-ner-version2
+      - OS_AUTH_URL=${OS_AUTH_URL}
+      - OS_PROJECT_ID=${OS_PROJECT_ID}
+      - OS_USERNAME=${OS_USERNAME}
+      - OS_PASSWORD=${OS_PASSWORD}
+      - OS_USER_DOMAIN_NAME=${OS_USER_DOMAIN_NAME:-Default}
+      - OS_PROJECT_DOMAIN_ID=${OS_PROJECT_DOMAIN_ID:-default}
+      - OS_REGION_NAME=${OS_REGION_NAME:-CHI@TACC}
+      - BUCKET_NAME=cuad-data-proj11-v2
+    volumes:
+      - ./output:/app/output

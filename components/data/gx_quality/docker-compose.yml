@@ -1,0 +1,7 @@
+version: '3.8'
+services:
+  gx-validator:
+    build: .
+    volumes:
+      - ./data:/data
+      - ./gx_output:/app/gx_output

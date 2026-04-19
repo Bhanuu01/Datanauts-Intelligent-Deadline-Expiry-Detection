@@ -1,0 +1,53 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: retrain-pipeline
+  namespace: ml
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: retrain-pipeline
+              image: ghcr.io/bhanuu01/datanauts-platform-automation:latest
+              env:
+                - name: FEEDBACK_METRICS_PATH
+                  value: /data/feedback_metrics.json
+                - name: RETRAIN_DECISION_PATH
+                  value: /data/retrain_decision.json
+                - name: MIN_FEEDBACK_EVENTS
+                  value: "500"
+                - name: MAX_CORRECTION_RATE
+                  value: "0.15"
+                - name: NER_MODEL_NAME
+                  value: bert_ner_v5
+                - name: CLASSIFIER_MODEL_NAME
+                  value: roberta_clf_v5
+                - name: MLFLOW_TRACKING_URI
+                  value: http://mlflow.platform.svc.cluster.local:5000
+                - name: MLFLOW_S3_ENDPOINT_URL
+                  value: http://minio.platform.svc.cluster.local:9000
+                - name: AWS_ACCESS_KEY_ID
+                  value: mlflow
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: platform-secrets
+                      key: MINIO_ROOT_PASSWORD
+              resources:
+                requests:
+                  cpu: "2000m"
+                  memory: "4Gi"
+                limits:
+                  cpu: "4000m"
+                  memory: "8Gi"
+              volumeMounts:
+                - name: retrain-data
+                  mountPath: /data
+          volumes:
+            - name: retrain-data
+              persistentVolumeClaim:
+                claimName: model-storage-pvc

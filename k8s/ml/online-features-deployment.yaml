@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: online-features
+  namespace: ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: online-features
+  template:
+    metadata:
+      labels:
+        app: online-features
+    spec:
+      containers:
+        - name: online-features
+          image: ghcr.io/bhanuu01/datanauts-online-features:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: REDIS_HOST
+              value: redis.paperless.svc.cluster.local
+            - name: REDIS_PORT
+              value: "6379"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 20
