@@ -1,9 +1,0 @@
-datasets==2.18.0
-huggingface_hub==0.22.2
-nltk==3.8.1
-faker==24.3.0
-reportlab==4.1.0
-python-dateutil==2.9.0
-tqdm==4.66.2
-pandas==2.2.1
-python-openstackclient
