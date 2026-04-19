@@ -1,51 +1,58 @@
-import os, time, platform, argparse, random
+import os, re, time, platform, argparse, random
 import torch, mlflow, mlflow.pytorch
 import numpy as np
-from datasets import Dataset, concatenate_datasets, load_dataset
+from collections import Counter
+from datasets import load_from_disk
 from transformers import (
     AutoTokenizer, AutoModelForTokenClassification,
-    TrainingArguments, Trainer, DataCollatorForTokenClassification
+    TrainingArguments, Trainer, DataCollatorForTokenClassification,
+    EarlyStoppingCallback,
 )
-from seqeval.metrics import f1_score, precision_score, recall_score
+from seqeval.metrics import f1_score, precision_score, recall_score, classification_report
 
 os.environ["AWS_ACCESS_KEY_ID"]      = "datanauts-key"
 os.environ["AWS_SECRET_ACCESS_KEY"]  = "datanauts-secret"
-os.environ["GIT_PYTHON_REFRESH"] = "quiet"
+os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
 os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://129.114.27.190:9000"
 
-MLFLOW_URI   = "http://129.114.27.190:8000"
-EXPERIMENT   = "deadline-detection-ner"
-LABEL_LIST   = ["O", "B-DATE", "I-DATE"]
-LABEL2ID     = {l: i for i, l in enumerate(LABEL_LIST)}
-ID2LABEL     = {i: l for i, l in enumerate(LABEL_LIST)}
-MONTHS       = {
+MLFLOW_URI  = "http://129.114.27.190:8000"
+EXPERIMENT  = "deadline-detection-ner"
+DATA_PATH   = "./data/deadline_sentences"
+OUTPUT_DIR  = "/tmp/deadline-ner"
+
+LABEL_LIST  = ["O","B-EXP_DATE","I-EXP_DATE","B-START_DATE","I-START_DATE","B-DURATION","I-DURATION"]
+LABEL2ID    = {l: i for i, l in enumerate(LABEL_LIST)}
+ID2LABEL    = {i: l for i, l in enumerate(LABEL_LIST)}
+
+MONTHS = {
     "january","february","march","april","may","june",
     "july","august","september","october","november","december",
-    "jan","feb","mar","apr","jun","jul","aug","sep","oct","nov","dec"
+    "jan","feb","mar","apr","jun","jul","aug","sep","oct","nov","dec",
 }
 
 CONFIGS = {
     "baseline": {
         "base_model": None, "epochs": 0, "learning_rate": 0,
-        "batch_size": 16, "max_seq_length": 128, "fp16": False,
+        "batch_size": 16, "max_seq_length": 256, "fp16": False,
     },
-    "bert_finetune_v1": {
+    "bert_ner_v1": {
         "base_model": "dslim/bert-base-NER", "epochs": 3, "learning_rate": 2e-5,
-        "batch_size": 16, "max_seq_length": 128, "fp16": True,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True,
     },
-    "bert_finetune_v2": {
+    "bert_ner_v2": {
         "base_model": "dslim/bert-base-NER", "epochs": 3, "learning_rate": 5e-5,
-        "batch_size": 16, "max_seq_length": 128, "fp16": True,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True,
     },
-    "bert_finetune_v3": {
+    "bert_ner_v3": {
         "base_model": "dslim/bert-base-NER", "epochs": 5, "learning_rate": 2e-5,
-        "batch_size": 16, "max_seq_length": 128, "fp16": True,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True,
     },
     "bert_base_cased": {
         "base_model": "bert-base-cased", "epochs": 3, "learning_rate": 2e-5,
-        "batch_size": 16, "max_seq_length": 128, "fp16": True,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True,
     },
 }
+
 
 def set_seeds(seed=42):
     random.seed(seed)
@@ -53,37 +60,15 @@ def set_seeds(seed=42):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-def load_and_split_data(seed=42):
-    ds       = load_dataset("tanvitakavane/datanauts_project_cuad-deadline-ner")
-    all_data = concatenate_datasets([ds["train"], ds["test"]])
-    all_data = all_data.filter(lambda x: "B-DATE" in x["ner_labels"])
 
-    def convert_labels(example):
-        example["ner_tags"] = [LABEL2ID.get(l, 0) for l in example["ner_labels"]]
-        return example
-
-    all_data    = all_data.map(convert_labels)
-    event_types = list(set(all_data["event_type"]))
-    random.seed(seed)
-    train_list, val_list, test_list = [], [], []
-
-    for etype in event_types:
-        subset  = all_data.filter(lambda x: x["event_type"] == etype)
-        n       = len(subset)
-        indices = list(range(n))
-        random.shuffle(indices)
-        t_end   = int(n * 0.8)
-        v_end   = int(n * 0.9)
-        train_list.append(subset.select(indices[:t_end]))
-        val_list.append(subset.select(indices[t_end:v_end]))
-        test_list.append(subset.select(indices[v_end:]))
-
-    train_ds = concatenate_datasets(train_list).select_columns(["tokens", "ner_tags"]).shuffle(seed=seed)
-    val_ds   = concatenate_datasets(val_list).select_columns(["tokens", "ner_tags"]).shuffle(seed=seed)
-    test_ds  = concatenate_datasets(test_list).select_columns(["tokens", "ner_tags"]).shuffle(seed=seed)
-
-    print(f"Train: {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)}")
+def load_ner_data():
+    dd       = load_from_disk(DATA_PATH)
+    train_ds = dd["train"].select_columns(["tokens", "ner_tags"])
+    val_ds   = dd["val"].select_columns(["tokens", "ner_tags"])
+    test_ds  = dd["test"].select_columns(["tokens", "ner_tags"])
+    print(f"Train: {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)} sentences")
     return train_ds, val_ds, test_ds
+
 
 def tokenize_dataset(train_ds, val_ds, test_ds, tokenizer, max_length):
     def tokenize_and_align(examples):
@@ -96,9 +81,9 @@ def tokenize_dataset(train_ds, val_ds, test_ds, tokenizer, max_length):
             word_ids = tokenized.word_ids(batch_index=i)
             prev, ids = None, []
             for wid in word_ids:
-                if wid is None:      ids.append(-100)
-                elif wid != prev:    ids.append(labels[wid])
-                else:                ids.append(-100)
+                if wid is None:     ids.append(-100)
+                elif wid != prev:   ids.append(labels[wid])
+                else:               ids.append(-100)
                 prev = wid
             aligned.append(ids)
         tokenized["labels"] = aligned
@@ -109,10 +94,11 @@ def tokenize_dataset(train_ds, val_ds, test_ds, tokenizer, max_length):
     tok_test  = test_ds.map(tokenize_and_align,  batched=True, remove_columns=test_ds.column_names)
     return tok_train, tok_val, tok_test
 
+
 def compute_metrics(p):
     preds, labels = p
     preds       = np.argmax(preds, axis=2)
-    true_preds  = [[ID2LABEL[p] for p, l in zip(pred, lab) if l != -100] for pred, lab in zip(preds, labels)]
+    true_preds  = [[ID2LABEL[x] for x, l in zip(pred, lab) if l != -100] for pred, lab in zip(preds, labels)]
     true_labels = [[ID2LABEL[l] for l in lab if l != -100] for lab in labels]
     return {
         "f1":        f1_score(true_labels, true_preds),
@@ -120,22 +106,21 @@ def compute_metrics(p):
         "recall":    recall_score(true_labels, true_preds),
     }
 
+
 def run_baseline(test_ds):
-    import re
     true_seqs, pred_seqs = [], []
     for sample in test_ds:
         tokens   = sample["tokens"]
         tags     = sample["ner_tags"]
         true_seq = [ID2LABEL[t] for t in tags]
-        pred_seq = []
-        i = 0
+        pred_seq, i = [], 0
         while i < len(tokens):
             tok_clean = tokens[i].rstrip(".,").lower()
             if tok_clean in MONTHS:
-                pred_seq.append("B-DATE")
+                pred_seq.append("B-EXP_DATE")
                 i += 1
                 while i < len(tokens) and re.match(r"^\d{1,4}[,.]?$", tokens[i]):
-                    pred_seq.append("I-DATE")
+                    pred_seq.append("I-EXP_DATE")
                     i += 1
             else:
                 pred_seq.append("O")
@@ -148,13 +133,14 @@ def run_baseline(test_ds):
         "entity_recall":    recall_score(true_seqs, pred_seqs),
     }
 
-def train_model(model_name, cfg, tok_train, tok_val, tok_test, tokenizer, train_ds):
+
+def train_model(model_name, cfg, tok_train, tok_val, tok_test, tokenizer):
     model  = AutoModelForTokenClassification.from_pretrained(
         cfg["base_model"], num_labels=len(LABEL_LIST),
-        id2label=ID2LABEL, label2id=LABEL2ID, ignore_mismatched_sizes=True
+        id2label=ID2LABEL, label2id=LABEL2ID, ignore_mismatched_sizes=True,
     )
     t_args = TrainingArguments(
-        output_dir=f"/tmp/deadline-{model_name}",
+        output_dir=f"{OUTPUT_DIR}-{model_name}",
         num_train_epochs=cfg["epochs"],
         per_device_train_batch_size=cfg["batch_size"],
         per_device_eval_batch_size=cfg["batch_size"],
@@ -162,7 +148,7 @@ def train_model(model_name, cfg, tok_train, tok_val, tok_test, tokenizer, train_
         weight_decay=0.01,
         warmup_steps=50,
         fp16=cfg["fp16"] and torch.cuda.is_available(),
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="f1",
@@ -172,27 +158,36 @@ def train_model(model_name, cfg, tok_train, tok_val, tok_test, tokenizer, train_
     trainer = Trainer(
         model=model, args=t_args,
         train_dataset=tok_train, eval_dataset=tok_val,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=DataCollatorForTokenClassification(tokenizer),
         compute_metrics=compute_metrics,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
     )
     print(f"Training {model_name} | lr={cfg['learning_rate']} | epochs={cfg['epochs']}...")
     t0           = time.time()
     train_result = trainer.train()
     train_time   = time.time() - t0
+
     print("Evaluating on test set...")
-    predictions  = trainer.predict(tok_test)
-    raw          = predictions.metrics
-    test_result  = {
-        "eval_f1":        raw.get("test_f1", 0),
-        "eval_precision": raw.get("test_precision", 0),
-        "eval_recall":    raw.get("test_recall", 0),
-        "eval_loss":      raw.get("test_loss", 0),
+    preds_out   = trainer.predict(tok_test)
+    raw_preds   = np.argmax(preds_out.predictions, axis=2)
+    raw_labs    = preds_out.label_ids
+    true_preds  = [[ID2LABEL[x] for x, l in zip(p, lb) if l != -100] for p, lb in zip(raw_preds, raw_labs)]
+    true_labels = [[ID2LABEL[l] for l in lb if l != -100] for lb in raw_labs]
+    report      = classification_report(true_labels, true_preds)
+    print(report)
+    test_result = {
+        "eval_f1":        f1_score(true_labels, true_preds),
+        "eval_precision": precision_score(true_labels, true_preds),
+        "eval_recall":    recall_score(true_labels, true_preds),
+        "eval_loss":      preds_out.metrics.get("test_loss", 0),
     }
     print(f"Done! Time: {train_time:.1f}s | Test F1: {test_result['eval_f1']:.4f}")
-    return trainer.model, train_result, test_result, train_time
+    return trainer.model, train_result, test_result, train_time, report
 
-def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time, train_ds, val_ds, test_ds):
+
+def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
+                  train_ds, val_ds, test_ds, report=""):
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT)
     with mlflow.start_run(run_name=model_name):
@@ -204,6 +199,8 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
             "learning_rate":  cfg["learning_rate"],
             "max_seq_length": cfg["max_seq_length"],
             "fp16":           cfg["fp16"],
+            "num_labels":     len(LABEL_LIST),
+            "label_schema":   "EXP_DATE|START_DATE|DURATION",
             "train_size":     len(train_ds),
             "val_size":       len(val_ds),
             "test_size":      len(test_ds),
@@ -217,24 +214,25 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
             "time_per_epoch_sec":   train_time / max(cfg["epochs"], 1),
             "samples_per_sec":      len(train_ds) * max(cfg["epochs"], 1) / max(train_time, 1),
             "train_loss":           train_result.training_loss if train_result else 0,
-            "test_f1":              test_result.get("eval_f1", test_result.get("entity_f1", 0)),
-            "test_precision":       test_result.get("eval_precision", test_result.get("entity_precision", 0)),
-            "test_recall":          test_result.get("eval_recall", test_result.get("entity_recall", 0)),
+            "test_f1":              test_result.get("eval_f1",        test_result.get("entity_f1",        0)),
+            "test_precision":       test_result.get("eval_precision",  test_result.get("entity_precision", 0)),
+            "test_recall":          test_result.get("eval_recall",     test_result.get("entity_recall",    0)),
             "test_loss":            test_result.get("eval_loss", 0),
         })
-        if model is not None:
-            pass  # model artifact skipped - metrics logged above
+        if report:
+            mlflow.log_text(report, "ner_classification_report.txt")
         print(f"Logged {model_name} → {MLFLOW_URI}")
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, choices=list(CONFIGS.keys()),
-                        help="Which model variant to run")
+                        help="Which NER model variant to run")
     args = parser.parse_args()
 
     set_seeds(42)
-    cfg        = CONFIGS[args.model]
-    train_ds, val_ds, test_ds = load_and_split_data(seed=42)
+    cfg = CONFIGS[args.model]
+    train_ds, val_ds, test_ds = load_ner_data()
 
     if args.model == "baseline":
         t0      = time.time()
@@ -242,23 +240,25 @@ def main():
         elapsed = time.time() - t0
         print(f"Baseline F1: {metrics['entity_f1']:.4f} | Time: {elapsed:.2f}s")
         log_to_mlflow(
-            "baseline", {"base_model": "regex", "epochs": 0, "batch_size": 16,
-                         "learning_rate": 0, "max_seq_length": 128, "fp16": False},
-            None,
-            None,
-            {**metrics, "eval_f1": metrics["entity_f1"],
+            "ner_baseline_regex",
+            {"base_model": "regex", "epochs": 0, "batch_size": 16,
+             "learning_rate": 0, "max_seq_length": 256, "fp16": False},
+            None, None,
+            {"eval_f1": metrics["entity_f1"],
              "eval_precision": metrics["entity_precision"],
              "eval_recall": metrics["entity_recall"]},
-            elapsed, train_ds, val_ds, test_ds
+            elapsed, train_ds, val_ds, test_ds,
         )
         return
 
-    tokenizer               = AutoTokenizer.from_pretrained(cfg["base_model"])
+    tokenizer                    = AutoTokenizer.from_pretrained(cfg["base_model"])
     tok_train, tok_val, tok_test = tokenize_dataset(train_ds, val_ds, test_ds, tokenizer, cfg["max_seq_length"])
-    model, train_result, test_result, train_time = train_model(
-        args.model, cfg, tok_train, tok_val, tok_test, tokenizer, train_ds
+    model, train_result, test_result, train_time, report = train_model(
+        args.model, cfg, tok_train, tok_val, tok_test, tokenizer,
     )
-    log_to_mlflow(args.model, cfg, model, train_result, test_result, train_time, train_ds, val_ds, test_ds)
+    log_to_mlflow(args.model, cfg, model, train_result, test_result, train_time,
+                  train_ds, val_ds, test_ds, report)
+
 
 if __name__ == "__main__":
     main()

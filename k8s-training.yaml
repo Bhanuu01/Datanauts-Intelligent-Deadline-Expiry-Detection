@@ -17,7 +17,7 @@ spec:
       containers:
         - name: deadline-training
           image: deadline-training:latest
-          command: ["python", "src/train_ner.py", "--model", "bert_finetune_v1"]
+          command: ["python", "src/train_ner.py", "--model", "bert_ner_v1"]
           env:
             - name: MLFLOW_TRACKING_URI
               value: "http://mlflow-service:5000"
@@ -54,7 +54,8 @@ spec:
           effect: NoSchedule
   backoffLimit: 2
 ---
-# To run classifier instead, change command to:
-# ["python", "src/train_classifier.py", "--model", "roberta_clf_v3"]
-# Available NER models:      baseline | bert_finetune_v1 | bert_finetune_v2 | bert_finetune_v3 | bert_base_cased
-# Available CLF models:      baseline | roberta_clf_v1 | roberta_clf_v2 | roberta_clf_v3
+# Run order:
+# Step 1 (data prep): ["python", "src/build_dataset.py"]
+# Step 2 classifier:  ["python", "src/train_classifier.py", "--model", "roberta_clf_v1"]
+# Available NER models: baseline | bert_ner_v1 | bert_ner_v2 | bert_ner_v3 | bert_base_cased
+# Available CLF models: baseline | roberta_clf_v1 | roberta_clf_v2 | roberta_clf_v3

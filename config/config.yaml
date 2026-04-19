@@ -1,25 +1,31 @@
 model:
-  name: "baseline"
+  name: "bert_ner_v1"
   base_model: "dslim/bert-base-NER"
-  num_labels: 3
+  num_labels: 7  # O B-EXP_DATE I-EXP_DATE B-START_DATE I-START_DATE B-DURATION I-DURATION
+
+classifier:
+  name: "roberta_clf_v1"
+  base_model: "roberta-base"
+  num_labels: 3  # none explicit computable
+  none_ratio: 5  # downsample none class to 5x positives
 
 data:
-  cuad_max_samples: 500
-  synthetic_invoice_count: 300
-  max_seq_length: 128
-  train_split: 0.8
-  val_split: 0.1
-  test_split: 0.1
+  dataset: "tanvitakavane/datanauts_project_cuad-deadline-ner-version2"
+  sentence_data_path: "./data/deadline_sentences"
+  max_seq_length: 256
   seed: 42
+  # Splits are contract-level (373 train / 68 val / 69 test) — do NOT reshuffle
 
 training:
   epochs: 3
   batch_size: 16
   learning_rate: 2e-5
   weight_decay: 0.01
-  warmup_ratio: 0.1
+  warmup_steps: 50
   fp16: true
 
 mlflow:
-  experiment_name: "deadline-detection-ner"
-  tracking_uri: ""
+  tracking_uri: "http://129.114.27.190:8000"
+  s3_endpoint: "http://129.114.27.190:9000"
+  experiment_ner: "deadline-detection-ner"
+  experiment_clf: "deadline-detection-classifier"
