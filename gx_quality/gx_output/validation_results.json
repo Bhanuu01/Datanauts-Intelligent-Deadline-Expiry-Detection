@@ -1,0 +1,21 @@
+{
+  "raw_csv": {
+    "passed": true,
+    "stats": {
+      "evaluated": 5,
+      "successful": 5
+    }
+  },
+  "clean_jsonl": {
+    "passed": true,
+    "stats": {
+      "evaluated": 7,
+      "successful": 7
+    }
+  },
+  "drift_check": {
+    "passed": true,
+    "train_avg_tokens": 7289.423592493297,
+    "test_avg_tokens": 7518.927536231884
+  }
+}
