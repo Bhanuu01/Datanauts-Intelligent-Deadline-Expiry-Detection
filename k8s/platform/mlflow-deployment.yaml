@@ -31,30 +31,34 @@ spec:
                 secretKeyRef:
                   name: platform-secrets
                   key: POSTGRES_PASSWORD
-            - name: MLFLOW_BACKEND_STORE_URI
-              value: "postgresql://mlflow:mlflowpass123@mlflow-postgres:5432/mlflow"
-            - name: MLFLOW_DEFAULT_ARTIFACT_ROOT
-              value: "s3://mlflow/"
-            - name: MLFLOW_S3_ENDPOINT_URL
-              value: "http://minio-service.platform.svc.cluster.local:9000"
-            - name: AWS_ACCESS_KEY_ID
+            - name: MINIO_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: platform-secrets
-                  key: MINIO_ROOT_USER
+                  key: MINIO_ROOT_PASSWORD
+            - name: MLFLOW_BACKEND_STORE_URI
+              value: "postgresql://mlflow:$(POSTGRES_PASSWORD)@mlflow-postgres:5432/mlflow"
+            - name: MLFLOW_DEFAULT_ARTIFACT_ROOT
+              value: "s3://mlflow/"
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: "http://minio.platform.svc.cluster.local:9000"
+            - name: AWS_ACCESS_KEY_ID
+              value: mlflow
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
                   name: platform-secrets
                   key: MINIO_ROOT_PASSWORD
           command:
-            - mlflow
-            - server
-            - --host=0.0.0.0
-            - --port=5000
-            - --backend-store-uri=postgresql://mlflow:mlflowpass123@mlflow-postgres:5432/mlflow
-            - --default-artifact-root=s3://mlflow/
-            - --allowed-hosts=*
+            - sh
+            - -c
+            - >
+              mlflow server
+              --host=0.0.0.0
+              --port=5000
+              --backend-store-uri=postgresql://mlflow:${POSTGRES_PASSWORD}@mlflow-postgres:5432/mlflow
+              --default-artifact-root=s3://mlflow/
+              --allowed-hosts=*
           volumeMounts:
             - name: mlflow-data
               mountPath: /mlflow

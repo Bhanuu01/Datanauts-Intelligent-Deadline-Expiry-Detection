@@ -7,11 +7,13 @@ sleep 15
 mkdir -p ~/.kube
 sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
 sudo chown $(id -u):$(id -g) ~/.kube/config
+export KUBECONFIG=~/.kube/config
 echo "k3s installed."
 
 echo "=== Step 2: Create namespaces ==="
 kubectl apply -f k8s/namespace-paperless.yaml
 kubectl apply -f k8s/namespace-platform.yaml
+kubectl apply -f k8s/namespace-ml.yaml
 
 echo "=== Step 3: Create secrets (edit the script first!) ==="
 bash scripts/create-secrets.sh
