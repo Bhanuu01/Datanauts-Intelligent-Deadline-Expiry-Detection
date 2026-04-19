@@ -1,13 +1,15 @@
 model:
-  name: "bert_ner_v1"
+  name: "bert_ner_v5"
   base_model: "dslim/bert-base-NER"
   num_labels: 7  # O B-EXP_DATE I-EXP_DATE B-START_DATE I-START_DATE B-DURATION I-DURATION
 
 classifier:
-  name: "roberta_clf_v1"
+  name: "roberta_clf_v5"
   base_model: "roberta-base"
-  num_labels: 3  # none explicit computable
-  none_ratio: 5  # downsample none class to 5x positives
+  num_labels: 4  # none expiration effective renewal
+  label_schema: "none|expiration|effective|renewal"
+  none_ratio: 10  # downsample none class to 10x positives
+  focal_loss: false  # set true for roberta_clf_v6
 
 data:
   dataset: "tanvitakavane/datanauts_project_cuad-deadline-ner-version2"

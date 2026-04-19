@@ -1,5 +1,5 @@
 import os, time, platform, argparse, random
-import torch, torch.nn as nn, mlflow, mlflow.pytorch
+import torch, torch.nn as nn, torch.nn.functional as F, mlflow, mlflow.pytorch
 import numpy as np
 from collections import Counter
 from datasets import load_from_disk
@@ -27,28 +27,36 @@ NUM_LABELS   = 4
 CONFIGS = {
     "baseline": {
         "base_model": "roberta-base", "epochs": 0, "learning_rate": 0,
-        "batch_size": 16, "max_seq_length": 256, "fp16": False, "none_ratio": 5,
+        "batch_size": 16, "max_seq_length": 256, "fp16": False, "none_ratio": 5, "focal": False,
     },
     "roberta_clf_v1": {
         "base_model": "roberta-base", "epochs": 3, "learning_rate": 2e-5,
-        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 5,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 5, "focal": False,
     },
     "roberta_clf_v2": {
         "base_model": "roberta-base", "epochs": 3, "learning_rate": 5e-5,
-        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 5,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 5, "focal": False,
     },
     "roberta_clf_v3": {
         "base_model": "roberta-base", "epochs": 5, "learning_rate": 2e-5,
-        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 3,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 3, "focal": False,
     },
     "roberta_clf_v4": {
         "base_model": "roberta-base", "epochs": 4, "learning_rate": 2e-5,
-        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 8,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 8, "focal": False,
+    },
+    "roberta_clf_v5": {
+        "base_model": "roberta-base", "epochs": 4, "learning_rate": 2e-5,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 10, "focal": False,
+    },
+    "roberta_clf_v6": {
+        "base_model": "roberta-base", "epochs": 5, "learning_rate": 2e-5,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 12, "focal": True,
     },
 }
 
 
-# ── Weighted loss Trainer — fixes 97% none-class imbalance ───────────────────
+# ── Weighted CE loss Trainer ─────────────────────────────────────────────────
 class WeightedTrainer(Trainer):
     def __init__(self, class_weights, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -60,6 +68,24 @@ class WeightedTrainer(Trainer):
         logits  = outputs.logits
         w       = self.class_weights.to(logits.device)
         loss    = nn.CrossEntropyLoss(weight=w)(logits, labels)
+        return (loss, outputs) if return_outputs else loss
+
+
+# ── Weighted Focal loss Trainer — stronger minority class focus ───────────────
+class WeightedFocalTrainer(Trainer):
+    def __init__(self, class_weights, gamma=2.0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.class_weights = class_weights
+        self.gamma         = gamma
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        labels  = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits  = outputs.logits
+        w       = self.class_weights.to(logits.device)
+        ce_loss = nn.CrossEntropyLoss(weight=w, reduction="none")(logits, labels)
+        pt      = torch.exp(-ce_loss)
+        loss    = ((1 - pt) ** self.gamma * ce_loss).mean()
         return (loss, outputs) if return_outputs else loss
 
 
@@ -94,13 +120,16 @@ def load_classifier_data(none_ratio, seed=42):
     return train_ds, val_ds, test_ds
 
 
-def compute_class_weights(train_ds):
+def compute_class_weights(train_ds, max_weight=10.0):
     labels  = [int(x) for x in train_ds["classifier_label"]]
     counts  = Counter(labels)
     total   = sum(counts.values())
-    weights = [total / (NUM_LABELS * max(counts.get(i, 1), 1)) for i in range(NUM_LABELS)]
+    weights = [
+        min(total / (NUM_LABELS * max(counts.get(i, 1), 1)), max_weight)
+        for i in range(NUM_LABELS)
+    ]
     print(f"Class counts : {dict(counts)}")
-    print(f"Class weights: {[f'{w:.2f}' for w in weights]}")
+    print(f"Class weights: {[f'{w:.2f}' for w in weights]} (capped at {max_weight}x)")
     return torch.tensor(weights, dtype=torch.float)
 
 
@@ -123,11 +152,16 @@ def tokenize_data(train_ds, val_ds, test_ds, tokenizer, max_length):
 def compute_clf_metrics(p):
     preds  = np.argmax(p.predictions, axis=1)
     labels = p.label_ids
-    return {
-        "accuracy": float(accuracy_score(labels, preds)),
-        "f1":       float(skf1(labels, preds, average="macro", zero_division=0)),
+    metrics = {
+        "accuracy":    float(accuracy_score(labels, preds)),
+        "f1":          float(skf1(labels, preds, average="macro",    zero_division=0)),
         "f1_weighted": float(skf1(labels, preds, average="weighted", zero_division=0)),
     }
+    for i, name in enumerate(["none", "expiration", "effective", "renewal"]):
+        metrics[f"f1_{name}"] = float(
+            skf1(labels, preds, labels=[i], average="macro", zero_division=0)
+        )
+    return metrics
 
 
 def run_baseline(test_ds):
@@ -161,8 +195,11 @@ def train_classifier(model_name, cfg, tok_train, tok_val, tok_test, tokenizer, c
         logging_steps=20,
         report_to="none",
     )
-    trainer = WeightedTrainer(
+    TrainerCls = WeightedFocalTrainer if cfg.get("focal", False) else WeightedTrainer
+    focal_kwargs = {"gamma": 2.0} if cfg.get("focal", False) else {}
+    trainer = TrainerCls(
         class_weights=class_weights,
+        **focal_kwargs,
         model=model, args=t_args,
         train_dataset=tok_train, eval_dataset=tok_val,
         processing_class=tokenizer,
@@ -173,6 +210,7 @@ def train_classifier(model_name, cfg, tok_train, tok_val, tok_test, tokenizer, c
     print(f"Training {model_name} | lr={cfg['learning_rate']} | epochs={cfg['epochs']}...")
     t0           = time.time()
     train_result = trainer.train()
+    trainer.save_model(f"{OUTPUT_DIR}-{model_name}")
     train_time   = time.time() - t0
 
     print("Evaluating on test set...")
@@ -208,6 +246,7 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
             "max_seq_length": cfg["max_seq_length"],
             "fp16":           cfg["fp16"],
             "none_ratio":     cfg["none_ratio"],
+            "focal_loss":     cfg.get("focal", False),
             "train_size":     len(train_ds),
             "val_size":       len(val_ds),
             "test_size":      len(test_ds),
@@ -222,8 +261,20 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
             "samples_per_sec":      len(train_ds) * max(cfg["epochs"], 1) / max(train_time, 1),
             "train_loss":           train_result.training_loss if train_result else 0,
             "test_f1":              test_result.get("eval_f1", 0),
+            "test_f1_none":         test_result.get("eval_f1_none", 0),
+            "test_f1_expiration":   test_result.get("eval_f1_expiration", 0),
+            "test_f1_effective":    test_result.get("eval_f1_effective", 0),
+            "test_f1_renewal":      test_result.get("eval_f1_renewal", 0),
             "test_accuracy":        test_result.get("eval_accuracy", 0),
             "test_loss":            test_result.get("eval_loss", 0),
+        })
+        train_counts = Counter(int(x) for x in train_ds["classifier_label"])
+        mlflow.log_params({
+            "train_none":       train_counts.get(0, 0),
+            "train_expiration": train_counts.get(1, 0),
+            "train_effective":  train_counts.get(2, 0),
+            "train_renewal":    train_counts.get(3, 0),
+            "focal_loss":       cfg.get("focal", False),
         })
         if report:
             mlflow.log_text(report, "clf_classification_report.txt")

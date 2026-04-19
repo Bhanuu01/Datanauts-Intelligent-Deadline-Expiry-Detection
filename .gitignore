@@ -9,3 +9,5 @@ outputs/
 .DS_Store
 mlflow.db
 mlruns/
+training_runs*.md
+*.cast

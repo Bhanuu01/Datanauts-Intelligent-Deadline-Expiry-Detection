@@ -1,5 +1,5 @@
 import os, re, time, platform, argparse, random
-import torch, mlflow, mlflow.pytorch
+import torch, torch.nn as nn, mlflow, mlflow.pytorch
 import numpy as np
 from collections import Counter
 from datasets import load_from_disk
@@ -47,11 +47,23 @@ CONFIGS = {
         "base_model": "dslim/bert-base-NER", "epochs": 5, "learning_rate": 2e-5,
         "batch_size": 16, "max_seq_length": 256, "fp16": True,
     },
+    "bert_ner_v4": {
+        "base_model": "dslim/bert-base-NER", "epochs": 5, "learning_rate": 2e-5,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True,
+    },
+    "bert_ner_v5": {
+        "base_model": "dslim/bert-base-NER", "epochs": 5, "learning_rate": 2e-5,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True,
+    },
     "bert_base_cased": {
         "base_model": "bert-base-cased", "epochs": 3, "learning_rate": 2e-5,
         "batch_size": 16, "max_seq_length": 256, "fp16": True,
     },
 }
+
+# O-tag weight=1.0, entity tags upweighted — amplifies rare entity signal
+# (downweighting O caused false-positive explosion: recall=1.0, precision=0.01)
+NER_WEIGHTS = torch.tensor([1.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0])
 
 
 def set_seeds(seed=42):
@@ -61,12 +73,27 @@ def set_seeds(seed=42):
     torch.cuda.manual_seed_all(seed)
 
 
+# ── Weighted NER Trainer — down-weights O tokens to reduce label dominance ─────────
+class WeightedNERTrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        labels  = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits  = outputs.logits
+        w       = NER_WEIGHTS.to(logits.device)
+        loss    = nn.CrossEntropyLoss(weight=w, ignore_index=-100)(
+            logits.view(-1, logits.size(-1)), labels.view(-1)
+        )
+        return (loss, outputs) if return_outputs else loss
+
+
 def load_ner_data():
-    dd       = load_from_disk(DATA_PATH)
-    train_ds = dd["train"].select_columns(["tokens", "ner_tags"])
-    val_ds   = dd["val"].select_columns(["tokens", "ner_tags"])
-    test_ds  = dd["test"].select_columns(["tokens", "ner_tags"])
-    print(f"Train: {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)} sentences")
+    dd        = load_from_disk(DATA_PATH)
+    # Train on ALL sentences: model needs O-token context to avoid false positives
+    # (non-none only = 550 sentences → model tags everything as entity)
+    train_ds  = dd["train"].select_columns(["tokens", "ner_tags"])
+    val_ds    = dd["val"].select_columns(["tokens", "ner_tags"])
+    test_ds   = dd["test"].select_columns(["tokens", "ner_tags"])
+    print(f"Train (all): {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)} sentences")
     return train_ds, val_ds, test_ds
 
 
@@ -100,11 +127,18 @@ def compute_metrics(p):
     preds       = np.argmax(preds, axis=2)
     true_preds  = [[ID2LABEL[x] for x, l in zip(pred, lab) if l != -100] for pred, lab in zip(preds, labels)]
     true_labels = [[ID2LABEL[l] for l in lab if l != -100] for lab in labels]
-    return {
-        "f1":        f1_score(true_labels, true_preds),
-        "precision": precision_score(true_labels, true_preds),
-        "recall":    recall_score(true_labels, true_preds),
+    report  = classification_report(true_labels, true_preds, output_dict=True, zero_division=0)
+    metrics = {
+        "f1":        f1_score(true_labels,        true_preds, zero_division=0),
+        "precision": precision_score(true_labels, true_preds, zero_division=0),
+        "recall":    recall_score(true_labels,    true_preds, zero_division=0),
     }
+    for entity in ["EXP_DATE", "START_DATE", "DURATION"]:
+        if entity in report:
+            metrics[f"{entity}_f1"]       = report[entity]["f1-score"]
+            metrics[f"{entity}_precision"] = report[entity]["precision"]
+            metrics[f"{entity}_recall"]    = report[entity]["recall"]
+    return metrics
 
 
 def run_baseline(test_ds):
@@ -155,7 +189,7 @@ def train_model(model_name, cfg, tok_train, tok_val, tok_test, tokenizer):
         logging_steps=20,
         report_to="none",
     )
-    trainer = Trainer(
+    trainer = WeightedNERTrainer(
         model=model, args=t_args,
         train_dataset=tok_train, eval_dataset=tok_val,
         processing_class=tokenizer,
@@ -166,6 +200,7 @@ def train_model(model_name, cfg, tok_train, tok_val, tok_test, tokenizer):
     print(f"Training {model_name} | lr={cfg['learning_rate']} | epochs={cfg['epochs']}...")
     t0           = time.time()
     train_result = trainer.train()
+    trainer.save_model(f"{OUTPUT_DIR}-{model_name}")
     train_time   = time.time() - t0
 
     print("Evaluating on test set...")
@@ -210,14 +245,17 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
             "platform":       platform.platform(),
         })
         mlflow.log_metrics({
-            "total_train_time_sec": train_time,
-            "time_per_epoch_sec":   train_time / max(cfg["epochs"], 1),
-            "samples_per_sec":      len(train_ds) * max(cfg["epochs"], 1) / max(train_time, 1),
-            "train_loss":           train_result.training_loss if train_result else 0,
-            "test_f1":              test_result.get("eval_f1",        test_result.get("entity_f1",        0)),
-            "test_precision":       test_result.get("eval_precision",  test_result.get("entity_precision", 0)),
-            "test_recall":          test_result.get("eval_recall",     test_result.get("entity_recall",    0)),
-            "test_loss":            test_result.get("eval_loss", 0),
+            "total_train_time_sec":  train_time,
+            "time_per_epoch_sec":    train_time / max(cfg["epochs"], 1),
+            "samples_per_sec":       len(train_ds) * max(cfg["epochs"], 1) / max(train_time, 1),
+            "train_loss":            train_result.training_loss if train_result else 0,
+            "test_f1":               test_result.get("eval_f1",              test_result.get("entity_f1",        0)),
+            "test_precision":        test_result.get("eval_precision",        test_result.get("entity_precision", 0)),
+            "test_recall":           test_result.get("eval_recall",           test_result.get("entity_recall",    0)),
+            "test_EXP_DATE_f1":      test_result.get("eval_EXP_DATE_f1",      0),
+            "test_START_DATE_f1":    test_result.get("eval_START_DATE_f1",    0),
+            "test_DURATION_f1":      test_result.get("eval_DURATION_f1",      0),
+            "test_loss":             test_result.get("eval_loss", 0),
         })
         if report:
             mlflow.log_text(report, "ner_classification_report.txt")

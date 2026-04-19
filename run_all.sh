@@ -44,6 +44,8 @@ run_variant train_ner.py baseline
 run_variant train_ner.py bert_ner_v1
 run_variant train_ner.py bert_ner_v2
 run_variant train_ner.py bert_ner_v3
+run_variant train_ner.py bert_ner_v4
+run_variant train_ner.py bert_ner_v5
 run_variant train_ner.py bert_base_cased
 
 # ── Classifier variants ───────────────────────────────────────────────────────
@@ -52,8 +54,30 @@ run_variant train_classifier.py baseline
 run_variant train_classifier.py roberta_clf_v1
 run_variant train_classifier.py roberta_clf_v2
 run_variant train_classifier.py roberta_clf_v3
+run_variant train_classifier.py roberta_clf_v4
+run_variant train_classifier.py roberta_clf_v5
+run_variant train_classifier.py roberta_clf_v6
+
+# ── End-to-end evaluation (best models from MLflow) ───────────────────────────
+log "--- End-to-End Evaluation ---"
+NER_MODEL="${NER_MODEL_PATH:-/tmp/deadline-ner/bert_ner_v5}"
+CLF_MODEL="${CLF_MODEL_PATH:-/tmp/deadline-clf/roberta_clf_v5}"
+if [ -d "$NER_MODEL" ] && [ -d "$CLF_MODEL" ]; then
+  python "$ROOT/src/evaluate.py" \
+    --clf_model "$CLF_MODEL" \
+    --ner_model "$NER_MODEL" \
+    --threshold 0.7 \
+    2>&1 | tee -a "$LOG_DIR/evaluate_${TIMESTAMP}.log"
+  log "Evaluation complete — results logged to MLflow"
+else
+  log "Skipping evaluation: model dirs not found. Set NER_MODEL_PATH and CLF_MODEL_PATH."
+fi
 
 log "========================================================"
-log "All runs complete. Summary saved to: $SUMMARY"
+log "All runs complete. Summary: $SUMMARY"
 log "MLflow UI: http://129.114.27.190:8000"
+log ""
+log "Next steps:"
+log "  Feedback:  python src/feedback_loop.py --status"
+log "  Predict:   python src/predict.py --clf_model \$CLF_MODEL --ner_model \$NER_MODEL --sentences 'sentence'"
 log "========================================================"
