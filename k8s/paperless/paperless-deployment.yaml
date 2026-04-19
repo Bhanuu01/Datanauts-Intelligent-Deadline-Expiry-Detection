@@ -63,7 +63,7 @@ spec:
             - name: PAPERLESS_OCR_LANGUAGE
               value: eng
             - name: PAPERLESS_URL
-              value: http://<YOUR_NODE_IP>
+              value: http://129.114.27.190
           volumeMounts:
             - name: data
               mountPath: /usr/src/paperless/data
