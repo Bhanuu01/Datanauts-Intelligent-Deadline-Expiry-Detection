@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: deadline-inference
-          image: ghcr.io/bhanuu01/datanauts-inference:latest
+          image: ghcr.io/bhanuu01/datanauts-inference-runtime:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8001
