@@ -24,6 +24,12 @@ kubectl create secret generic platform-secrets \
   --from-literal=MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
+# ML automation secrets
+kubectl create secret generic platform-secrets \
+  --namespace=ml \
+  --from-literal=MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 echo "Secrets created."
 echo "Paperless admin password: ${PAPERLESS_ADMIN_PASSWORD}"
 echo "MinIO root password: ${MINIO_ROOT_PASSWORD}"

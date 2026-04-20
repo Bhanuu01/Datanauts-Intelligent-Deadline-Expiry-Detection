@@ -31,6 +31,31 @@ This branch turns the project from role-separated milestone work into a single d
 4. Retrain, promotion, drift-monitor, and data-quality jobs are defined as Kubernetes CronJobs.
 5. Model artifacts and monitoring inputs are stored on shared persistent volume storage.
 
+## Team-owned production contracts
+
+- Data pipeline entrypoints
+  - ingestion: `components/data/pipeline/scripts/run_pipeline.sh`
+  - batch compilation: `components/data/batch_pipeline/batch_pipeline.py`
+  - feedback/data generator: `components/data/data_generator/generator.py`
+  - online features: `components/data/online_features/feature_service.py`
+  - quality/drift checks: `components/data/evaluation_monitoring/*.py`
+- Data monitoring thresholds
+  - OCR length drift ratio `> 2.0`: alert
+  - train/test overlap `> 0`: alert
+  - null filenames `> 0`: alert
+  - event type drift `> 0.4`: warning
+  - empty OCR text `> 5%`: warning
+- Training-owned promotion gate
+  - NER F1 `>= 0.65`
+  - classifier macro F1 `>= 0.75`
+  - end-to-end coverage `>= 0.60`
+  - false alarm count `<= 10`
+- Current training artifacts
+  - `/tmp/deadline-ner-bert_ner_v5`
+  - `/tmp/deadline-clf-roberta_clf_v5`
+- Current evaluation command
+  - `python src/evaluate.py --clf_model <path> --ner_model <path> --threshold 0.7`
+
 ## Remaining polish
 
 1. Capture a demo-ready Grafana dashboard view for inference latency, request volume, and pod health.
