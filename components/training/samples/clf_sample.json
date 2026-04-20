@@ -5,13 +5,17 @@
     "0": "none",
     "1": "expiration",
     "2": "effective",
-    "3": "renewal"
+    "3": "renewal",
+    "4": "agreement",
+    "5": "notice_period"
   },
   "label_descriptions": {
     "none": "Sentence contains no deadline or date-related information",
     "expiration": "Sentence describes an expiration or termination clause (explicit date or duration-based)",
     "effective": "Sentence describes the effective date or start date of the agreement",
-    "renewal": "Sentence describes an automatic renewal or extension clause"
+    "renewal": "Sentence describes an automatic renewal or extension clause",
+    "agreement": "Sentence describes the execution or commencement date of the agreement itself",
+    "notice_period": "Sentence describes a required advance notice period before termination or renewal"
   },
   "note": "deadline_type (explicit vs computable) is derived downstream from NER output — EXP_DATE found → explicit, DURATION found → computable",
   "examples": [
@@ -101,7 +105,51 @@
           "none": 0.97,
           "expiration": 0.01,
           "effective": 0.01,
-          "renewal": 0.01
+          "renewal": 0.01,
+          "agreement": 0.00,
+          "notice_period": 0.00
+        }
+      }
+    }
+  ],
+  "new_examples": [
+    {
+      "id": "clf-006",
+      "description": "Agreement — execution / commencement date of the agreement",
+      "input": {
+        "sentence": "This Agreement is entered into as of March 1, 2024, by and between the parties listed herein."
+      },
+      "output": {
+        "predicted_label": "agreement",
+        "predicted_label_id": 4,
+        "confidence": 0.74,
+        "scores": {
+          "none": 0.05,
+          "expiration": 0.06,
+          "effective": 0.10,
+          "renewal": 0.02,
+          "agreement": 0.74,
+          "notice_period": 0.03
+        }
+      }
+    },
+    {
+      "id": "clf-007",
+      "description": "Notice period — advance written notice required before termination",
+      "input": {
+        "sentence": "Either party may terminate this Agreement upon sixty (60) days prior written notice to the other party."
+      },
+      "output": {
+        "predicted_label": "notice_period",
+        "predicted_label_id": 5,
+        "confidence": 0.81,
+        "scores": {
+          "none": 0.04,
+          "expiration": 0.07,
+          "effective": 0.02,
+          "renewal": 0.04,
+          "agreement": 0.02,
+          "notice_period": 0.81
         }
       }
     }

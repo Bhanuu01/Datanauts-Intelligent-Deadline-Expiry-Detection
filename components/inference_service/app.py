@@ -30,10 +30,11 @@ DATE_RE = re.compile(
 )
 
 EVENT_KEYWORDS = {
-    "expiration": ("expire", "expiration", "expiry", "terminate", "termination"),
-    "effective": ("effective", "start date", "commence", "commencement"),
-    "renewal": ("renew", "renewal", "auto-renew", "extension"),
-    "payment_due": ("due", "payment due", "invoice due", "pay by"),
+    "expiration": ("expire", "expiration", "expiry", "terminate", "termination", "end date"),
+    "effective": ("effective", "start date", "commence", "commencement", "begins on"),
+    "renewal": ("renew", "renewal", "auto-renew", "extension", "successive term"),
+    "agreement": ("agreement date", "executed on", "signed on", "dated as of"),
+    "notice_period": ("notice period", "notice to terminate", "prior written notice", "days notice"),
 }
 
 

@@ -31,16 +31,23 @@ Raw contract text (OCR / Paperless-ngx)
 
 ## Models
 
-| Model | Base | Task | Test F1 |
-|-------|------|------|---------|
-| `bert_ner_v5` | `dslim/bert-base-NER` | Token classification (NER) | 0.67 |
-| `roberta_clf_v5` | `roberta-base` | Sequence classification (CLF) | 0.80 |
+| Model | Base | Task | Labels | Test F1 |
+|-------|------|------|--------|---------|
+| `bert_ner_v5` | `dslim/bert-base-NER` | Token classification (NER) | 9 | 0.67 |
+| `roberta_clf_v5` | `roberta-base` | Sequence classification (CLF) | 6 | 0.80 |
 
-### NER Labels
-`O` · `B-EXP_DATE` · `I-EXP_DATE` · `B-START_DATE` · `I-START_DATE` · `B-DURATION` · `I-DURATION`
+### NER Labels (9 BIO tags)
+`O` · `B-EXP_DATE` · `I-EXP_DATE` · `B-START_DATE` · `I-START_DATE` · `B-DURATION` · `I-DURATION` · `B-NOTICE_DATE` · `I-NOTICE_DATE`
 
-### Classifier Labels
-`none` · `expiration` · `effective` · `renewal`
+### Classifier Labels (6 classes)
+| Label | Source Column | Description |
+|---|---|---|
+| `none` | OCR text | No deadline-related content |
+| `expiration` | `Expiration Date` | Contract end / termination date |
+| `effective` | `Effective Date` | Contract start date |
+| `renewal` | `Renewal Term` | Auto-renewal duration clause |
+| `agreement` | `Agreement Date` | Contract execution / signing date |
+| `notice_period` | `Notice Period To Terminate Renewal` | Deadline to act before auto-renewal |
 
 ---
 
@@ -55,10 +62,12 @@ Source: [CUAD v1](https://huggingface.co/datasets/cuad) — 510 real-world comme
 | Test | 69 | 8,640 |
 
 **Build strategy:**
-- **Positive sentences** extracted from CUAD clause columns (`Expiration Date`, `Effective Date`, `Renewal Term`)
-- **None sentences** sampled from general OCR text (5:1 ratio)
+- **Positive sentences** extracted from 5 CUAD clause columns: `Expiration Date`, `Effective Date`, `Agreement Date`, `Renewal Term`, `Notice Period To Terminate Renewal`
+- **None sentences** sampled from general OCR text (8:1 ratio vs positives)
 - **NER labels** generated via regex date-span detector (8+ date formats)
-- **Class weights** applied to handle imbalance (`effective`: 10×, `renewal`: 10×)
+- **Class weights** applied to handle imbalance
+- **Split leakage verified** via `assert_no_split_leakage()` — zero `Filename` overlap across splits
+- **`event_type` column** from HF dataset used as a validation cross-check during build
 
 ---
 
@@ -78,7 +87,8 @@ Source: [CUAD v1](https://huggingface.co/datasets/cuad) — 510 real-world comme
 │   └── config.yaml              # Model configs, hyperparameters
 ├── samples/
 │   ├── ner_sample.json          # Example NER output format
-│   └── clf_sample.json          # Example classifier output format
+│   ├── clf_sample.json          # Example classifier output format
+│   └── cross_domain_sample.json # Cross-domain generalization test samples (10 non-CUAD examples)
 ├── Dockerfile                   # GPU training image (PyTorch 2.1 + CUDA 12.1)
 ├── docker-compose-mlflow.yaml   # MLflow tracking stack (MinIO + PostgreSQL)
 ├── run_all.sh                   # Full pipeline orchestration script
@@ -146,33 +156,55 @@ docker run --rm \
   "contract_id": "contract_001",
   "has_deadline": true,
   "uncertain": false,
+  "multi_date_conflict": false,
   "events": [
     {
       "event_type": "expiration",
       "deadline_date": "2025-12-31",
+      "date_candidates": ["2025-12-31"],
+      "conflict_flag": false,
       "deadline_type": "explicit",
       "confidence": 0.9991,
       "uncertain": false,
       "source_sentence": "This Agreement shall expire on December 31, 2025.",
-      "class_scores": {"none": 0.0001, "expiration": 0.9991, "effective": 0.0006, "renewal": 0.0002}
+      "class_scores": {"none": 0.0001, "expiration": 0.9991, "effective": 0.0006, "renewal": 0.0002, "agreement": 0.0001, "notice_period": 0.0001}
     },
     {
       "event_type": "renewal",
       "deadline_date": null,
+      "date_candidates": [],
+      "conflict_flag": false,
       "deadline_type": "computable",
       "confidence": 0.999,
       "uncertain": false,
       "source_sentence": "The term automatically renews for successive one-year periods.",
-      "class_scores": {"none": 0.0003, "expiration": 0.0003, "effective": 0.0003, "renewal": 0.999}
+      "class_scores": {"none": 0.0003, "expiration": 0.0003, "effective": 0.0003, "renewal": 0.999, "agreement": 0.0001, "notice_period": 0.0001}
     }
   ]
 }
 ```
 
 `deadline_type: "computable"` means a duration was found but no absolute date — the caller computes: `start_date + duration`.  
-`uncertain: true` means confidence < 0.7 — sentence is queued for human review via `feedback_loop.py`.
+`uncertain: true` means confidence < 0.7 — sentence is queued for human review via `feedback_loop.py`.  
+`conflict_flag: true` means multiple distinct resolved dates were found for the same event type — requires human disambiguation.  
+`multi_date_conflict: true` (top-level) means at least one event in the document has a conflict.
 
-### 6. Run all variants (full benchmark)
+### 6. Cross-domain generalization test (optional)
+```bash
+docker run --rm \
+  -v $(pwd)/src:/app/src \
+  -v $(pwd)/samples:/app/samples \
+  -v $(pwd)/outputs:/tmp \
+  deadline-training:phase2 \
+  python src/evaluate.py \
+    --clf_model /tmp/deadline-clf-roberta_clf_v5 \
+    --ner_model /tmp/deadline-ner-bert_ner_v5 \
+    --cross_domain_samples samples/cross_domain_sample.json
+```
+
+Edit `samples/cross_domain_sample.json` to add sentences from leases, invoices, compliance docs, etc.
+
+### 7. Run all variants (full benchmark)
 ```bash
 bash run_all.sh
 ```

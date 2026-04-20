@@ -23,14 +23,20 @@ os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
 MLFLOW_URI = "http://129.114.27.190:8000"
 EXPERIMENT = "deadline-detection-ner-ray-tune"
 BASE_MODEL = "dslim/bert-base-NER"
-DATA_PATH  = "./data/deadline_sentences"
+DATA_PATH  = "/app/data/deadline_sentences"
 
-LABEL_LIST = ["O","B-EXP_DATE","I-EXP_DATE","B-START_DATE","I-START_DATE","B-DURATION","I-DURATION"]
+LABEL_LIST = [
+    "O",
+    "B-EXP_DATE",    "I-EXP_DATE",
+    "B-START_DATE",  "I-START_DATE",
+    "B-DURATION",    "I-DURATION",
+    "B-NOTICE_DATE", "I-NOTICE_DATE",
+]
 LABEL2ID   = {l: i for i, l in enumerate(LABEL_LIST)}
 ID2LABEL   = {i: l for i, l in enumerate(LABEL_LIST)}
 
-# O-tag weight=0.1, entity tags=1.0
-NER_WEIGHTS = torch.tensor([0.1, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+# O-tag weight=1.0, entity tags upweighted; NOTICE_DATE 12x (rarest)
+NER_WEIGHTS = torch.tensor([1.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 12.0, 12.0])
 
 mlflow.set_tracking_uri(MLFLOW_URI)
 mlflow.set_experiment(EXPERIMENT)
@@ -50,9 +56,7 @@ class WeightedNERTrainer(Trainer):
 
 def load_ner_data():
     dd        = load_from_disk(DATA_PATH)
-    train_raw = dd["train"].select_columns(["tokens", "ner_tags", "classifier_label"])
-    train_ds  = train_raw.filter(lambda x: int(x["classifier_label"]) != 0)
-    train_ds  = train_ds.remove_columns(["classifier_label"])
+    train_ds  = dd["train"].select_columns(["tokens", "ner_tags"])
     val_ds    = dd["val"].select_columns(["tokens", "ner_tags"])
     test_ds   = dd["test"].select_columns(["tokens", "ner_tags"])
     return train_ds, val_ds, test_ds
@@ -69,7 +73,7 @@ def compute_metrics(p):
         "precision": precision_score(true_labels, true_preds, zero_division=0),
         "recall":    recall_score(true_labels,    true_preds, zero_division=0),
     }
-    for entity in ["EXP_DATE", "START_DATE", "DURATION"]:
+    for entity in ["EXP_DATE", "START_DATE", "DURATION", "NOTICE_DATE"]:
         if entity in report:
             metrics[f"{entity}_f1"] = report[entity]["f1-score"]
     return metrics
@@ -93,7 +97,7 @@ def train_trial(config):
             "base_model":     BASE_MODEL,
             "search_method":  "Ray Tune ASHA",
             "num_labels":     len(LABEL_LIST),
-            "label_schema":   "O|B-EXP_DATE|I-EXP_DATE|B-START_DATE|I-START_DATE|B-DURATION|I-DURATION",
+            "label_schema":   "O|B-EXP_DATE|I-EXP_DATE|B-START_DATE|I-START_DATE|B-DURATION|I-DURATION|B-NOTICE_DATE|I-NOTICE_DATE",
             "gpu":            torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
             "filter_none":    True,
         })
@@ -128,6 +132,7 @@ def train_trial(config):
         model = AutoModelForTokenClassification.from_pretrained(
             BASE_MODEL, num_labels=len(LABEL_LIST),
             id2label=ID2LABEL, label2id=LABEL2ID,
+            ignore_mismatched_sizes=True,
         )
 
         t_args = TrainingArguments(
@@ -163,15 +168,16 @@ def train_trial(config):
         test_f1   = preds_out.metrics.get("test_f1", 0)
 
         mlflow.log_metrics({
-            "test_f1":              test_f1,
-            "test_precision":       preds_out.metrics.get("test_precision",    0),
-            "test_recall":          preds_out.metrics.get("test_recall",       0),
-            "test_EXP_DATE_f1":     preds_out.metrics.get("test_EXP_DATE_f1", 0),
-            "test_START_DATE_f1":   preds_out.metrics.get("test_START_DATE_f1",0),
-            "test_DURATION_f1":     preds_out.metrics.get("test_DURATION_f1", 0),
-            "total_train_time_sec": train_time,
-            "time_per_epoch_sec":   train_time / epochs,
-            "train_loss":           train_result.training_loss,
+            "test_f1":               test_f1,
+            "test_precision":        preds_out.metrics.get("test_precision",     0),
+            "test_recall":           preds_out.metrics.get("test_recall",        0),
+            "test_EXP_DATE_f1":      preds_out.metrics.get("test_EXP_DATE_f1",  0),
+            "test_START_DATE_f1":    preds_out.metrics.get("test_START_DATE_f1", 0),
+            "test_DURATION_f1":      preds_out.metrics.get("test_DURATION_f1",   0),
+            "test_NOTICE_DATE_f1":   preds_out.metrics.get("test_NOTICE_DATE_f1",0),
+            "total_train_time_sec":  train_time,
+            "time_per_epoch_sec":    train_time / epochs,
+            "train_loss":            train_result.training_loss,
         })
 
     from ray import train as ray_train

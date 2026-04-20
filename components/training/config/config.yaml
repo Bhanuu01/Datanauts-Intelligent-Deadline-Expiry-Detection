@@ -1,14 +1,14 @@
 model:
   name: "bert_ner_v5"
   base_model: "dslim/bert-base-NER"
-  num_labels: 7  # O B-EXP_DATE I-EXP_DATE B-START_DATE I-START_DATE B-DURATION I-DURATION
+  num_labels: 9  # O B-EXP_DATE I-EXP_DATE B-START_DATE I-START_DATE B-DURATION I-DURATION B-NOTICE_DATE I-NOTICE_DATE
 
 classifier:
   name: "roberta_clf_v5"
   base_model: "roberta-base"
-  num_labels: 4  # none expiration effective renewal
-  label_schema: "none|expiration|effective|renewal"
-  none_ratio: 10  # downsample none class to 10x positives
+  num_labels: 6  # none expiration effective renewal agreement notice_period
+  label_schema: "none|expiration|effective|renewal|agreement|notice_period"
+  none_ratio: 8   # downsample none class to 8x positives (2 new positive classes added)
   focal_loss: false  # set true for roberta_clf_v6
 
 data:
@@ -16,7 +16,7 @@ data:
   sentence_data_path: "./data/deadline_sentences"
   max_seq_length: 256
   seed: 42
-  # Splits are contract-level (373 train / 68 val / 69 test) — do NOT reshuffle
+  # Splits are contract-level (373 train / 68 val / 69 test) — verified by assert_no_split_leakage()
 
 training:
   epochs: 3
@@ -31,3 +31,11 @@ mlflow:
   s3_endpoint: "http://129.114.27.190:9000"
   experiment_ner: "deadline-detection-ner"
   experiment_clf: "deadline-detection-classifier"
+  experiment_e2e: "deadline-detection-e2e"
+  experiment_cross_domain: "deadline-detection-cross-domain"
+
+eval:
+  cross_domain_eval: false  # set true and pass --cross_domain_samples to evaluate.py
+  cross_domain_samples_path: "./samples/cross_domain_sample.json"
+  confidence_threshold: 0.7
+  date_window_days: 30

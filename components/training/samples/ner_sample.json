@@ -1,7 +1,7 @@
 {
   "model": "deadline-ner (dslim/bert-base-NER fine-tuned)",
   "task": "token_classification",
-  "label_schema": ["O","B-EXP_DATE","I-EXP_DATE","B-START_DATE","I-START_DATE","B-DURATION","I-DURATION"],
+  "label_schema": ["O","B-EXP_DATE","I-EXP_DATE","B-START_DATE","I-START_DATE","B-DURATION","I-DURATION","B-NOTICE_DATE","I-NOTICE_DATE"],
   "examples": [
     {
       "id": "ner-001",
@@ -59,6 +59,26 @@
             "type": "START_DATE",
             "token_start": 6,
             "token_end": 8
+          }
+        ]
+      }
+    },
+    {
+      "id": "ner-004",
+      "description": "Notice period date — advance notice deadline for termination",
+      "input": {
+        "sentence": "Written notice of termination must be delivered no later than September 30, 2025.",
+        "tokens": ["Written","notice","of","termination","must","be","delivered","no","later","than","September","30,","2025."]
+      },
+      "output": {
+        "tokens":    ["Written","notice","of","termination","must","be","delivered","no","later","than","September",     "30,",          "2025."],
+        "ner_labels":["O",      "O",     "O","O",           "O",   "O","O",        "O","O",     "O",   "B-NOTICE_DATE","I-NOTICE_DATE","I-NOTICE_DATE"],
+        "entities": [
+          {
+            "text": "September 30, 2025.",
+            "type": "NOTICE_DATE",
+            "token_start": 10,
+            "token_end": 12
           }
         ]
       }

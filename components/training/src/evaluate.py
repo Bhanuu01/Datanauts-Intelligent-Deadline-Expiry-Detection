@@ -33,14 +33,15 @@ def run_evaluation(clf_model_path, ner_model_path, threshold=0.7):
     test_contracts = raw_hf["test"]
 
     stats = {
-        "total":              0,
-        "with_gt_date":       0,    # contracts that have at least one GT date
-        "covered":            0,    # GT contracts where we returned any event
-        "exact_match":        0,    # predicted date == GT date (exact string)
-        "within_30_days":     0,    # predicted date within 30 days of GT
-        "true_none":          0,    # no GT date, no prediction
-        "false_alarm":        0,    # no GT date but we predicted deadline
-        "uncertain_flagged":  0,    # at least one uncertain event returned
+        "total":                0,
+        "with_gt_date":         0,    # contracts that have at least one GT date
+        "covered":              0,    # GT contracts where we returned any event
+        "exact_match":          0,    # predicted date == GT date (exact string)
+        "within_30_days":       0,    # predicted date within 30 days of GT
+        "true_none":            0,    # no GT date, no prediction
+        "false_alarm":          0,    # no GT date but we predicted deadline
+        "uncertain_flagged":    0,    # at least one uncertain event returned
+        "multi_date_conflict":  0,    # at least one event with conflicting date candidates
     }
     per_type = defaultdict(lambda: {"covered": 0, "exact": 0, "within_30": 0, "total_gt": 0})
 
@@ -56,11 +57,14 @@ def run_evaluation(clf_model_path, ner_model_path, threshold=0.7):
         cid      = contract.get("Filename", "")
         exp_iso  = contract.get("expiration_date_iso") or ""
         eff_iso  = contract.get("effective_date_iso")  or ""
+        agr_iso  = contract.get("agreement_date_iso")  or ""
         gt_dates = {}
         if exp_iso:
             gt_dates["expiration"] = exp_iso
         if eff_iso:
             gt_dates["effective"]  = eff_iso
+        if agr_iso:
+            gt_dates["agreement"]  = agr_iso
 
         sents = [r["sentence"] for r in test_sentences_by_contract.get(cid, [])]
         if not sents:
@@ -81,6 +85,8 @@ def run_evaluation(clf_model_path, ner_model_path, threshold=0.7):
 
         if result.get("uncertain"):
             stats["uncertain_flagged"] += 1
+        if result.get("multi_date_conflict"):
+            stats["multi_date_conflict"] += 1
 
         if not has_gt:
             if not result["has_deadline"]:
@@ -120,6 +126,7 @@ def run_evaluation(clf_model_path, ner_model_path, threshold=0.7):
     print(f"  True none (correct)    : {stats['true_none']}")
     print(f"  False alarms           : {stats['false_alarm']}")
     print(f"  Uncertain flagged      : {stats['uncertain_flagged']}")
+    print(f"  Multi-date conflicts   : {stats['multi_date_conflict']}")
     print()
     for et, m in per_type.items():
         tot = max(m["total_gt"], 1)
@@ -137,12 +144,13 @@ def run_evaluation(clf_model_path, ner_model_path, threshold=0.7):
             "date_window": DATE_WINDOW,
         })
         mlflow.log_metrics({
-            "coverage_pct":          100 * stats["covered"]       / n_gt,
-            "exact_match_pct":       100 * stats["exact_match"]   / n_gt,
-            "within_30_days_pct":    100 * stats["within_30_days"]/ n_gt,
+            "coverage_pct":          100 * stats["covered"]            / n_gt,
+            "exact_match_pct":       100 * stats["exact_match"]        / n_gt,
+            "within_30_days_pct":    100 * stats["within_30_days"]     / n_gt,
             "false_alarm_count":     stats["false_alarm"],
             "true_none_count":       stats["true_none"],
             "uncertain_flagged":     stats["uncertain_flagged"],
+            "multi_date_conflict":   stats["multi_date_conflict"],
             "total_test_contracts":  stats["total"],
         })
         for et, m in per_type.items():
@@ -157,14 +165,74 @@ def run_evaluation(clf_model_path, ner_model_path, threshold=0.7):
     return stats, dict(per_type)
 
 
+def run_cross_domain_evaluation(samples_path, clf_model_path, ner_model_path, threshold=0.7):
+    """
+    Evaluate classifier generalization on held-out cross-domain samples.
+
+    samples_path: path to a JSON file with a list of:
+        [{"sentence": str, "expected_label": str, "source": str}, ...]
+
+    Reports per-class accuracy and logs results to MLflow under
+    experiment 'deadline-detection-cross-domain'.
+    """
+    import json
+    from transformers import pipeline as hf_pipeline
+    from sklearn.metrics import classification_report as skr
+
+    with open(samples_path) as f:
+        samples = json.load(f)
+
+    clf_pipe = hf_pipeline(
+        "text-classification",
+        model=clf_model_path,
+        top_k=None,
+        device=-1,
+    )
+
+    labels_true, labels_pred, sources = [], [], []
+    for item in samples:
+        results = clf_pipe(item["sentence"])[0]
+        best    = max(results, key=lambda x: x["score"])
+        labels_true.append(item["expected_label"])
+        labels_pred.append(best["label"].lower())
+        sources.append(item.get("source", "unknown"))
+
+    all_labels = sorted(set(labels_true + labels_pred))
+    report     = skr(labels_true, labels_pred, labels=all_labels, zero_division=0)
+    n          = len(samples)
+    correct    = sum(t == p for t, p in zip(labels_true, labels_pred))
+
+    print("\n======= Cross-Domain Evaluation =========")
+    print(f"  Samples          : {n}")
+    print(f"  Overall accuracy : {100*correct/max(n,1):.1f}%")
+    print(report)
+    print("=========================================")
+
+    mlflow.set_tracking_uri(MLFLOW_URI)
+    mlflow.set_experiment("deadline-detection-cross-domain")
+    with mlflow.start_run(run_name=f"cross_domain_{os.path.basename(clf_model_path)}"):
+        mlflow.log_params({"clf_model": clf_model_path, "samples_path": samples_path, "n_samples": n})
+        mlflow.log_metric("cross_domain_accuracy", correct / max(n, 1))
+        mlflow.log_text(report, "cross_domain_report.txt")
+        print(f"Cross-domain metrics logged → {MLFLOW_URI}")
+
+    return {"accuracy": correct / max(n, 1), "n": n}
+
+
 def main():
     parser = argparse.ArgumentParser(description="End-to-end deadline detection evaluation")
     parser.add_argument("--clf_model", required=True)
     parser.add_argument("--ner_model", required=True)
     parser.add_argument("--threshold", type=float, default=0.7)
+    parser.add_argument("--cross_domain_samples", default=None,
+                        help="Optional path to cross-domain samples JSON for generalization test")
     args = parser.parse_args()
 
     run_evaluation(args.clf_model, args.ner_model, args.threshold)
+    if args.cross_domain_samples:
+        run_cross_domain_evaluation(
+            args.cross_domain_samples, args.clf_model, args.ner_model, args.threshold
+        )
 
 
 if __name__ == "__main__":

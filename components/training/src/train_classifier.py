@@ -20,9 +20,9 @@ EXPERIMENT = "deadline-detection-classifier"
 DATA_PATH  = "./data/deadline_sentences"
 OUTPUT_DIR = "/tmp/deadline-clf"
 
-CLF_LABEL2ID = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3}
-CLF_ID2LABEL = {0: "none", 1: "expiration", 2: "effective", 3: "renewal"}
-NUM_LABELS   = 4
+CLF_LABEL2ID = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3, "agreement": 4, "notice_period": 5}
+CLF_ID2LABEL = {0: "none", 1: "expiration", 2: "effective", 3: "renewal", 4: "agreement", 5: "notice_period"}
+NUM_LABELS   = 6
 
 CONFIGS = {
     "baseline": {
@@ -47,11 +47,11 @@ CONFIGS = {
     },
     "roberta_clf_v5": {
         "base_model": "roberta-base", "epochs": 4, "learning_rate": 2e-5,
-        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 10, "focal": False,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 8, "focal": False,
     },
     "roberta_clf_v6": {
         "base_model": "roberta-base", "epochs": 5, "learning_rate": 2e-5,
-        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 12, "focal": True,
+        "batch_size": 16, "max_seq_length": 256, "fp16": True, "none_ratio": 10, "focal": True,
     },
 }
 
@@ -157,7 +157,7 @@ def compute_clf_metrics(p):
         "f1":          float(skf1(labels, preds, average="macro",    zero_division=0)),
         "f1_weighted": float(skf1(labels, preds, average="weighted", zero_division=0)),
     }
-    for i, name in enumerate(["none", "expiration", "effective", "renewal"]):
+    for i, name in enumerate(["none", "expiration", "effective", "renewal", "agreement", "notice_period"]):
         metrics[f"f1_{name}"] = float(
             skf1(labels, preds, labels=[i], average="macro", zero_division=0)
         )
@@ -218,7 +218,8 @@ def train_classifier(model_name, cfg, tok_train, tok_val, tok_test, tokenizer, c
     preds     = np.argmax(preds_out.predictions, axis=1)
     labels    = preds_out.label_ids
     report    = classification_report(labels, preds,
-                    target_names=[CLF_ID2LABEL[i] for i in range(NUM_LABELS)], zero_division=0)
+                    target_names=[CLF_ID2LABEL[i] for i in range(NUM_LABELS)],
+                    labels=list(range(NUM_LABELS)), zero_division=0)
     print(report)
     test_result = {
         "eval_f1":       float(skf1(labels, preds, average="macro",    zero_division=0)),
@@ -239,7 +240,7 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
             "base_model":     cfg["base_model"],
             "task":           "sequence_classification",
             "num_labels":     NUM_LABELS,
-            "label_schema":   "none|expiration|effective|renewal",
+            "label_schema":   "none|expiration|effective|renewal|agreement|notice_period",
             "epochs":         cfg["epochs"],
             "batch_size":     cfg["batch_size"],
             "learning_rate":  cfg["learning_rate"],
@@ -256,25 +257,29 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
             "platform":       platform.platform(),
         })
         mlflow.log_metrics({
-            "total_train_time_sec": train_time,
-            "time_per_epoch_sec":   train_time / max(cfg["epochs"], 1),
-            "samples_per_sec":      len(train_ds) * max(cfg["epochs"], 1) / max(train_time, 1),
-            "train_loss":           train_result.training_loss if train_result else 0,
-            "test_f1":              test_result.get("eval_f1", 0),
-            "test_f1_none":         test_result.get("eval_f1_none", 0),
-            "test_f1_expiration":   test_result.get("eval_f1_expiration", 0),
-            "test_f1_effective":    test_result.get("eval_f1_effective", 0),
-            "test_f1_renewal":      test_result.get("eval_f1_renewal", 0),
-            "test_accuracy":        test_result.get("eval_accuracy", 0),
-            "test_loss":            test_result.get("eval_loss", 0),
+            "total_train_time_sec":     train_time,
+            "time_per_epoch_sec":       train_time / max(cfg["epochs"], 1),
+            "samples_per_sec":          len(train_ds) * max(cfg["epochs"], 1) / max(train_time, 1),
+            "train_loss":               train_result.training_loss if train_result else 0,
+            "test_f1":                  test_result.get("eval_f1", 0),
+            "test_f1_none":             test_result.get("eval_f1_none", 0),
+            "test_f1_expiration":       test_result.get("eval_f1_expiration", 0),
+            "test_f1_effective":        test_result.get("eval_f1_effective", 0),
+            "test_f1_renewal":          test_result.get("eval_f1_renewal", 0),
+            "test_f1_agreement":        test_result.get("eval_f1_agreement", 0),
+            "test_f1_notice_period":    test_result.get("eval_f1_notice_period", 0),
+            "test_accuracy":            test_result.get("eval_accuracy", 0),
+            "test_loss":                test_result.get("eval_loss", 0),
         })
         train_counts = Counter(int(x) for x in train_ds["classifier_label"])
         mlflow.log_params({
-            "train_none":       train_counts.get(0, 0),
-            "train_expiration": train_counts.get(1, 0),
-            "train_effective":  train_counts.get(2, 0),
-            "train_renewal":    train_counts.get(3, 0),
-            "focal_loss":       cfg.get("focal", False),
+            "train_none":          train_counts.get(0, 0),
+            "train_expiration":    train_counts.get(1, 0),
+            "train_effective":     train_counts.get(2, 0),
+            "train_renewal":       train_counts.get(3, 0),
+            "train_agreement":     train_counts.get(4, 0),
+            "train_notice_period": train_counts.get(5, 0),
+            "focal_loss":          cfg.get("focal", False),
         })
         if report:
             mlflow.log_text(report, "clf_classification_report.txt")
