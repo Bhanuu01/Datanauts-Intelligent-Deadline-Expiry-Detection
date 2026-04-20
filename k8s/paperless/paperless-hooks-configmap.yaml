@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paperless-hooks
+  namespace: paperless
+data:
+  deadline_post_consume.py: |
+    #!/usr/bin/env python3
+    import json
+    import os
+    import sys
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    from pathlib import Path
+
+    PAPERLESS_URL = os.getenv("PAPERLESS_INTERNAL_URL", "http://127.0.0.1:8000")
+    INFERENCE_URL = os.getenv(
+        "DEADLINE_INFERENCE_URL",
+        "http://deadline-inference.ml.svc.cluster.local:8001/predict",
+    )
+    RESULTS_DIR = Path(os.getenv("DEADLINE_RESULTS_DIR", "/usr/src/paperless/data/deadline-results"))
+
+    def basic_auth_header():
+        import base64
+        username = os.environ["PAPERLESS_ADMIN_USER"]
+        password = os.environ["PAPERLESS_ADMIN_PASSWORD"]
+        token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        return f"Basic {token}"
+
+    def request_json(method, url, payload=None):
+        data = None
+        headers = {"Authorization": basic_auth_header(), "Accept": "application/json"}
+        if payload is not None:
+            data = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def get_document(document_id):
+        return request_json("GET", f"{PAPERLESS_URL}/api/documents/{document_id}/")
+
+    def find_tag_id(name):
+        query = urllib.parse.urlencode({"name__iexact": name, "page_size": 1})
+        response = request_json("GET", f"{PAPERLESS_URL}/api/tags/?{query}")
+        results = response.get("results", [])
+        return results[0]["id"] if results else None
+
+    def ensure_tag(name):
+        existing = find_tag_id(name)
+        if existing is not None:
+            return existing
+        created = request_json("POST", f"{PAPERLESS_URL}/api/tags/", {"name": name})
+        return int(created["id"])
+
+    def patch_document_tags(document_id, existing_tags, extra_tag_ids):
+        merged_tags = sorted(set(existing_tags + extra_tag_ids))
+        request_json("PATCH", f"{PAPERLESS_URL}/api/documents/{document_id}/", {"tags": merged_tags})
+
+    def call_inference(document_id, content, document_type, filename):
+        payload = {
+            "document_id": str(document_id),
+            "ocr_text": content,
+            "document_type": document_type or "unknown",
+            "filename": filename or f"document-{document_id}.pdf",
+        }
+        data = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            INFERENCE_URL,
+            data=data,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def build_tags(result):
+        tags = []
+        if result.get("has_deadline"):
+            tags.append("ml:deadline-detected")
+        if result.get("uncertain"):
+            tags.append("ml:deadline-review-needed")
+        for event in result.get("events", []):
+            event_type = event.get("event_type", "unknown")
+            tags.append(f"ml:event:{event_type}")
+        return sorted(set(tags))
+
+    def persist_result(document_id, result):
+        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        (RESULTS_DIR / f"{document_id}.json").write_text(json.dumps(result, indent=2))
+
+    def main():
+        document_id = int(os.environ["DOCUMENT_ID"])
+        document = get_document(document_id)
+        content = (document.get("content") or "").strip()
+        if not content:
+            print(f"No OCR content available for document {document_id}; skipping inference.")
+            return 0
+        result = call_inference(
+            document_id=document_id,
+            content=content,
+            document_type=document.get("document_type"),
+            filename=document.get("original_file_name") or document.get("archived_file_name"),
+        )
+        persist_result(document_id, result)
+        tag_names = build_tags(result)
+        if tag_names:
+            tag_ids = [ensure_tag(name) for name in tag_names]
+            patch_document_tags(document_id, document.get("tags", []), tag_ids)
+            print(f"Updated document {document_id} with tags: {', '.join(tag_names)}")
+        else:
+            print(f"No deadline tags added for document {document_id}.")
+        return 0
+
+    if __name__ == "__main__":
+        try:
+            sys.exit(main())
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            print(f"HTTP error during post-consume hook: {exc.code} {body}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as exc:
+            print(f"Unexpected error during post-consume hook: {exc}", file=sys.stderr)
+            sys.exit(1)
