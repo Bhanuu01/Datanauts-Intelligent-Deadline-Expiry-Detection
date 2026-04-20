@@ -1,5 +1,5 @@
 resources:
-  - ../namespace-ml.yaml
+  - namespace.yaml
   - model-storage-pvc.yaml
   - online-features-deployment.yaml
   - online-features-service.yaml
