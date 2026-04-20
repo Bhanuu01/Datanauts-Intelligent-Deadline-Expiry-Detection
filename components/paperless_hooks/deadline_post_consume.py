@@ -16,6 +16,10 @@ INFERENCE_URL = os.getenv(
     "DEADLINE_INFERENCE_URL",
     "http://deadline-inference.ml.svc.cluster.local:8001/predict",
 )
+FEEDBACK_URL = os.getenv(
+    "ONLINE_FEATURES_FEEDBACK_URL",
+    "http://online-features.ml.svc.cluster.local:8000/feedback",
+)
 RESULTS_DIR = Path(os.getenv("DEADLINE_RESULTS_DIR", "/usr/src/paperless/data/deadline-results"))
 
 
@@ -86,6 +90,18 @@ def call_inference(document_id: int, content: str, document_type: str | None, fi
         return json.loads(response.read().decode("utf-8"))
 
 
+def post_feedback(payload: Dict[str, Any]) -> None:
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        FEEDBACK_URL,
+        data=data,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=15):
+        return
+
+
 def build_tags(result: Dict[str, Any]) -> List[str]:
     tags = []
     if result.get("has_deadline"):
@@ -106,6 +122,24 @@ def persist_result(document_id: int, result: Dict[str, Any]) -> None:
     output_path.write_text(json.dumps(result, indent=2))
 
 
+def record_feedback_events(document_id: int, result: Dict[str, Any]) -> None:
+    event_name = "review_required" if result.get("uncertain") else (
+        "auto_tagged" if result.get("has_deadline") else "no_deadline"
+    )
+    confidence = max((event.get("confidence", 0.0) for event in result.get("events", [])), default=0.0)
+    event_types = sorted({event.get("event_type", "none") for event in result.get("events", [])}) or ["none"]
+    for event_type in event_types:
+        post_feedback(
+            {
+                "event": event_name,
+                "document_id": str(document_id),
+                "event_type": event_type,
+                "confidence": confidence,
+                "notes": f"paperless_hook:{result.get('mode', 'unknown')}",
+            }
+        )
+
+
 def main() -> int:
     document_id = int(os.environ["DOCUMENT_ID"])
     try:
@@ -122,6 +156,7 @@ def main() -> int:
             filename=document.get("original_file_name") or document.get("archived_file_name"),
         )
         persist_result(document_id, result)
+        record_feedback_events(document_id, result)
 
         tag_names = build_tags(result)
         if tag_names:
