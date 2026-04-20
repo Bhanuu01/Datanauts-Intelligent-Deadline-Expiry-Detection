@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: release-promotion
+  namespace: ml
+spec:
+  schedule: "20 3 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: release-promotion
+              image: ghcr.io/bhanuu01/datanauts-platform-automation:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "/app/components/platform_automation/promote_release.py"]
+              env:
+                - name: CURRENT_RELEASE_STAGE
+                  value: staging
+                - name: PROMOTION_DECISION_PATH
+                  value: /data/promotion_decision.json
+                - name: RELEASE_PLAN_PATH
+                  value: /data/release_plan.json
+              volumeMounts:
+                - name: release-data
+                  mountPath: /data
+          volumes:
+            - name: release-data
+              persistentVolumeClaim:
+                claimName: model-storage-pvc
