@@ -22,3 +22,10 @@ spec:
                 limits:
                   cpu: "1000m"
                   memory: "1Gi"
+              volumeMounts:
+                - name: monitoring-data
+                  mountPath: /data
+          volumes:
+            - name: monitoring-data
+              persistentVolumeClaim:
+                claimName: model-storage-pvc
