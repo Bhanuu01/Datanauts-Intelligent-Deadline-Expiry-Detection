@@ -1,10 +1,11 @@
-name: Integration CI
+name: Integration CI/CD
 
 on:
   push:
     branches:
       - integration/apr20
   pull_request:
+  workflow_dispatch:
 
 jobs:
   validate:
@@ -34,9 +35,144 @@ jobs:
             components/training/src/train_classifier.py \
             components/training/src/train_ner.py
 
-      - name: Verify release manifests exist
+      - name: Verify manifests exist
         run: |
           test -f k8s/release/kustomization.yaml
           test -f k8s/release/inference-staging-deployment.yaml
           test -f k8s/release/inference-canary-deployment.yaml
           test -f k8s/release/inference-production-deployment.yaml
+          test -f k8s/release/release-promotion-cronjob.yaml
+          test -f k8s/ml/retrain-pipeline-cronjob.yaml
+          test -f k8s/ml/model-promotion-cronjob.yaml
+
+  build-images:
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: datanauts-online-features
+            dockerfile: components/data/online_features/Dockerfile
+            context: components/data/online_features
+          - image: datanauts-data-generator
+            dockerfile: components/data/data_generator/Dockerfile
+            context: components/data/data_generator
+          - image: datanauts-data-monitoring
+            dockerfile: components/data/evaluation_monitoring/Dockerfile
+            context: components/data/evaluation_monitoring
+          - image: datanauts-platform-automation
+            dockerfile: components/platform_automation/Dockerfile
+            context: .
+          - image: datanauts-inference-runtime
+            dockerfile: components/inference_service/Dockerfile.runtime
+            context: .
+          - image: datanauts-onnx-serving
+            dockerfile: components/serving/Dockerfile.onnx_quant
+            context: .
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  lifecycle-dry-run:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install automation requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r components/platform_automation/requirements.txt
+
+      - name: Create dry-run lifecycle inputs
+        run: |
+          mkdir -p /tmp/lifecycle-data/model-releases/candidate-001/ner
+          mkdir -p /tmp/lifecycle-data/model-releases/candidate-001/classifier
+          mkdir -p /tmp/lifecycle-data/ner
+          mkdir -p /tmp/lifecycle-data/classifier
+          printf '{"ner_f1":0.81,"clf_macro_f1":0.84,"e2e_coverage":0.72,"false_alarm_count":2,"candidate_latency_p95_ms":120,"candidate_version":"candidate-001","candidate_paths":{"ner":"/tmp/lifecycle-data/model-releases/candidate-001/ner","classifier":"/tmp/lifecycle-data/model-releases/candidate-001/classifier"}}' > /tmp/lifecycle-data/evaluation_metrics.json
+          printf '{"live_error_rate":0.01,"live_latency_p95_ms":180,"live_correction_rate_7d":0.02}' > /tmp/lifecycle-data/serving_metrics.json
+          printf '{"current_version":"bootstrap","previous_version":null,"current_stage":"staging"}' > /tmp/lifecycle-data/release_state.json
+
+      - name: Evaluate promotion gate
+        run: |
+          EVALUATION_METRICS_PATH=/tmp/lifecycle-data/evaluation_metrics.json \
+          SERVING_METRICS_PATH=/tmp/lifecycle-data/serving_metrics.json \
+          PROMOTION_DECISION_PATH=/tmp/lifecycle-data/promotion_decision.json \
+          python components/platform_automation/evaluate_and_promote.py
+
+      - name: Apply dry-run promotion
+        run: |
+          PROMOTION_DECISION_PATH=/tmp/lifecycle-data/promotion_decision.json \
+          RELEASE_PLAN_PATH=/tmp/lifecycle-data/release_plan.json \
+          RELEASE_STATE_PATH=/tmp/lifecycle-data/release_state.json \
+          MODEL_RELEASES_ROOT=/tmp/lifecycle-data/model-releases \
+          MODEL_CANONICAL_ROOT=/tmp/lifecycle-data \
+          AUTO_APPLY_RELEASE=true \
+          SKIP_K8S_APPLY=true \
+          python components/platform_automation/promote_release.py
+
+      - name: Assert packaged deployment result
+        run: |
+          test -f /tmp/lifecycle-data/release_plan.json
+          test -f /tmp/lifecycle-data/release_state.json
+          test -d /tmp/lifecycle-data/ner
+          test -d /tmp/lifecycle-data/classifier
+
+  deploy-chameleon:
+    needs:
+      - build-images
+      - lifecycle-dry-run
+    if: github.event_name != 'pull_request' && secrets.KUBECONFIG_B64 != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > "$HOME/.kube/config"
+
+      - name: Apply manifests
+        run: |
+          kubectl apply -k k8s/ml
+          kubectl apply -k k8s/release
+
+      - name: Restart live inference deployments
+        run: |
+          kubectl rollout restart deployment/deadline-inference -n ml
+          kubectl rollout restart deployment/deadline-inference-staging -n ml
+          kubectl rollout restart deployment/deadline-inference-canary -n ml
+          kubectl rollout restart deployment/deadline-inference-production -n ml
