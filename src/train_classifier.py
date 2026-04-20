@@ -234,6 +234,7 @@ def train_classifier(model_name, cfg, tok_train, tok_val, tok_test, tokenizer, c
     t0           = time.time()
     train_result = trainer.train()
     trainer.save_model(f"{OUTPUT_DIR}-{model_name}")
+    tokenizer.save_pretrained(f"{OUTPUT_DIR}-{model_name}")
     train_time   = time.time() - t0
 
     print("Evaluating on test set...")
