@@ -43,4 +43,20 @@ async def predict(req: DocumentRequest):
     return {"document_id": req.document_id, "deadlines": deadlines}
 
 
+class FeedbackRequest(BaseModel):
+    document_id: str
+    original_prediction: str
+    user_corrected_value: str
 
+# Track how often users have to correct the model
+CORRECTION_COUNTER = Counter("model_user_corrections", "Count of user overrides")
+
+@app.post("/feedback")
+async def capture_feedback(req: FeedbackRequest):
+    CORRECTION_COUNTER.inc()
+    
+    # In the final integrated system, this data should be written to 
+    # the Data team's database so they can use it for retraining!
+    print(f"Feedback logged for doc {req.document_id}: User corrected '{req.original_prediction}' to '{req.user_corrected_value}'")
+    
+    return {"status": "feedback logged for retraining"}
