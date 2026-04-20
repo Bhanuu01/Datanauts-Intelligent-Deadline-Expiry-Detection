@@ -1,0 +1,6 @@
+FROM python:3.11-slim
+WORKDIR /app
+RUN pip install --no-cache-dir fastapi uvicorn transformers optimum[onnxruntime]
+COPY onnx_model/ ./onnx_model/
+COPY app_onnx.py .
+CMD ["uvicorn", "app_onnx:app", "--host", "0.0.0.0", "--port", "8001"]
