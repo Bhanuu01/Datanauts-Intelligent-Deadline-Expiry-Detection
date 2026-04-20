@@ -114,7 +114,9 @@ def package_candidate(ner_model_name: str, classifier_model_name: str) -> Dict[s
     return package_manifest
 
 
-def latest_experiment_metrics(tracking_uri: str, experiment_name: str) -> Dict[str, Any]:
+def best_experiment_run(tracking_uri: str, experiment_name: str,
+                        metric: str = "test_f1") -> Dict[str, Any]:
+    """Return the run with the highest value of `metric`, falling back to most-recent."""
     client = MlflowClient(tracking_uri=tracking_uri)
     experiment = client.get_experiment_by_name(experiment_name)
     if experiment is None:
@@ -122,9 +124,17 @@ def latest_experiment_metrics(tracking_uri: str, experiment_name: str) -> Dict[s
 
     runs = client.search_runs(
         experiment_ids=[experiment.experiment_id],
-        order_by=["attributes.start_time DESC"],
+        filter_string=f"metrics.{metric} > 0",
+        order_by=[f"metrics.{metric} DESC"],
         max_results=1,
     )
+    if not runs:
+        # No run logged the metric — fall back to most recently started run
+        runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            order_by=["attributes.start_time DESC"],
+            max_results=1,
+        )
     if not runs:
         raise RuntimeError(f"No MLflow runs found for experiment: {experiment_name}")
 
@@ -169,9 +179,10 @@ def build_evaluation_metrics(package_manifest: Dict[str, Any]) -> Dict[str, Any]
         raise RuntimeError("End-to-end evaluation failed")
 
     evaluation_metrics = json.loads(evaluation_path.read_text())
-    ner_metrics = latest_experiment_metrics(tracking_uri, os.getenv("NER_EXPERIMENT_NAME", "deadline-detection-ner"))
-    clf_metrics = latest_experiment_metrics(
-        tracking_uri, os.getenv("CLASSIFIER_EXPERIMENT_NAME", "deadline-detection-classifier")
+    selection_metric = os.getenv("SELECTION_METRIC", "test_f1")
+    ner_metrics = best_experiment_run(tracking_uri, os.getenv("NER_EXPERIMENT_NAME", "deadline-detection-ner"), selection_metric)
+    clf_metrics = best_experiment_run(
+        tracking_uri, os.getenv("CLASSIFIER_EXPERIMENT_NAME", "deadline-detection-classifier"), selection_metric
     )
 
     evaluation_metrics.update(

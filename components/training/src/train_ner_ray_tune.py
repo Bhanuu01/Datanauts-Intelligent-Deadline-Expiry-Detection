@@ -15,9 +15,9 @@ from transformers import (
 )
 from seqeval.metrics import f1_score, precision_score, recall_score, classification_report
 
-os.environ["AWS_ACCESS_KEY_ID"]      = "datanauts-key"
-os.environ["AWS_SECRET_ACCESS_KEY"]  = "datanauts-secret"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://129.114.27.190:9000"
+os.environ.setdefault("AWS_ACCESS_KEY_ID",      "datanauts-key")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY",  "datanauts-secret")
+os.environ.setdefault("MLFLOW_S3_ENDPOINT_URL", "http://129.114.27.190:9000")
 os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
 
 MLFLOW_URI = "http://129.114.27.190:8000"
@@ -155,7 +155,7 @@ def train_trial(config):
         trainer = WeightedNERTrainer(
             model=model, args=t_args,
             train_dataset=tok_train, eval_dataset=tok_val,
-            tokenizer=tokenizer,
+            processing_class=tokenizer,
             data_collator=DataCollatorForTokenClassification(tokenizer),
             compute_metrics=compute_metrics,
         )
@@ -205,7 +205,7 @@ def main():
             storage_path="/tmp/ray_results",
         ),
     )
-    print("\n=== Ray Tune ASHA: 8 trials on BERT NER (7-class), 2 concurrent ===\n")
+    print("\n=== Ray Tune ASHA: 8 trials on BERT NER (9-class), 2 concurrent ===\n")
     results = tuner.fit()
     best    = results.get_best_result(metric="f1", mode="max")
     print(f"\n=== BEST TRIAL ===")

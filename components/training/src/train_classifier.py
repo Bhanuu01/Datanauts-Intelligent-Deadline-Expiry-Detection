@@ -106,11 +106,28 @@ def downsample_none(ds, none_ratio, seed=42):
     return ds.select(keep)
 
 
-def load_classifier_data(none_ratio, seed=42):
+def load_classifier_data(none_ratio, seed=42, feedback_file=None):
     dd       = load_from_disk(DATA_PATH)
     train_ds = downsample_none(dd["train"], none_ratio, seed)
     val_ds   = dd["val"]
     test_ds  = dd["test"]
+
+    if feedback_file and os.path.exists(feedback_file):
+        import json
+        from datasets import Dataset, concatenate_datasets
+        feedback_rows = []
+        with open(feedback_file) as f:
+            for line in f:
+                try:
+                    feedback_rows.append(json.loads(line.strip()))
+                except Exception:
+                    pass
+        if feedback_rows:
+            fb_ds    = Dataset.from_list(feedback_rows)
+            keep_cols = set(train_ds.column_names)
+            fb_ds    = fb_ds.select_columns([c for c in fb_ds.column_names if c in keep_cols])
+            train_ds = concatenate_datasets([train_ds, fb_ds])
+            print(f"[feedback] Merged {len(feedback_rows)} labelled feedback samples into train set.")
 
     print(f"Train: {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)} sentences")
     for name, ds in [("train", train_ds), ("val", val_ds), ("test", test_ds)]:
@@ -294,11 +311,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, choices=list(CONFIGS.keys()),
                         help="Which classifier variant to run")
+    parser.add_argument("--feedback_file", default=None,
+                        help="Optional path to feedback_additions.jsonl to merge into training data")
     args = parser.parse_args()
 
     set_seeds(42)
     cfg = CONFIGS[args.model]
-    train_ds, val_ds, test_ds = load_classifier_data(cfg["none_ratio"])
+    train_ds, val_ds, test_ds = load_classifier_data(cfg["none_ratio"], feedback_file=args.feedback_file)
 
     if args.model == "baseline":
         t0          = time.time()

@@ -16,9 +16,9 @@ RETRAIN_TRIGGER_N    = 100
 MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://129.114.27.190:8000")
 EXPERIMENT = "deadline-feedback"
 
-os.environ["AWS_ACCESS_KEY_ID"]      = "datanauts-key"
-os.environ["AWS_SECRET_ACCESS_KEY"]  = "datanauts-secret"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://129.114.27.190:9000"
+os.environ.setdefault("AWS_ACCESS_KEY_ID",      "datanauts-key")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY",  "datanauts-secret")
+os.environ.setdefault("MLFLOW_S3_ENDPOINT_URL", "http://129.114.27.190:9000")
 
 
 def _queue_size():
@@ -115,8 +115,27 @@ def retrain(clf_model, next_version, queue_file):
     print(f"[feedback] Feedback training samples written to {additions_path}")
     print(f"[feedback] Triggering retrain: roberta_clf_{next_version}")
 
+    # Validate that the model config exists in train_classifier.py CONFIGS
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "train_classifier", os.path.join("src", "train_classifier.py")
+        )
+        tc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tc)
+        if f"roberta_clf_{next_version}" not in tc.CONFIGS:
+            print(f"[feedback] WARNING: 'roberta_clf_{next_version}' not in train_classifier.CONFIGS — "
+                  f"falling back to 'roberta_clf_v6'. Add the config entry to train_classifier.py to use a new version.")
+            next_version = "v6"
+    except Exception as e:
+        print(f"[feedback] Could not validate CONFIGS ({e}), proceeding anyway.")
+
     result = subprocess.run(
-        ["python", "src/train_classifier.py", "--model", f"roberta_clf_{next_version}"],
+        ["python", "src/train_classifier.py",
+         "--model", f"roberta_clf_{next_version}",
+         "--feedback_file", additions_path],
         capture_output=False,
     )
     if result.returncode == 0:
@@ -163,7 +182,7 @@ def main():
 
     parser.add_argument("--predictions", default=None,      help="[collect] Path to predict.py output JSON")
     parser.add_argument("--clf_model",   default="roberta_clf_v5", help="[retrain] Current classifier model name")
-    parser.add_argument("--next_version",default="v7",      help="[retrain] Version tag for retrained model")
+    parser.add_argument("--next_version",default="v6",      help="[retrain] Version tag for retrained model (must exist in train_classifier.py CONFIGS)")
     parser.add_argument("--threshold",   type=float, default=CONFIDENCE_THRESHOLD)
     parser.add_argument("--trigger_n",   type=int,   default=RETRAIN_TRIGGER_N)
     parser.add_argument("--queue_file",  default=QUEUE_FILE)

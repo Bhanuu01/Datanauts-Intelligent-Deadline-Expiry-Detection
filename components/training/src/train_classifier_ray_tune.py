@@ -76,7 +76,7 @@ def compute_clf_metrics(p):
         "f1":       float(skf1(labels, preds, average="macro",    zero_division=0)),
         "accuracy": float(accuracy_score(labels, preds)),
     }
-    for i, name in enumerate(["none", "expiration", "effective", "renewal"]):
+    for i, name in enumerate(["none", "expiration", "effective", "renewal", "agreement", "notice_period"]):
         metrics[f"f1_{name}"] = float(skf1(labels, preds, labels=[i], average="macro", zero_division=0))
     return metrics
 
@@ -159,7 +159,7 @@ def train_trial(config):
             class_weights=class_weights,
             model=model, args=t_args,
             train_dataset=tok_train, eval_dataset=tok_val,
-            tokenizer=tokenizer,
+            processing_class=tokenizer,
             data_collator=DataCollatorWithPadding(tokenizer),
             compute_metrics=compute_clf_metrics,
         )
@@ -176,7 +176,7 @@ def train_trial(config):
 
         per_class_f1 = {
             f"test_f1_{name}": float(skf1(labels_flat, preds_flat, labels=[i], average="macro", zero_division=0))
-            for i, name in enumerate(["none", "expiration", "effective", "renewal"])
+            for i, name in enumerate(["none", "expiration", "effective", "renewal", "agreement", "notice_period"])
         }
 
         mlflow.log_metrics({
@@ -217,7 +217,7 @@ def main():
             storage_path="/tmp/ray_results",
         ),
     )
-    print("\n=== Ray Tune ASHA: 8 trials on RoBERTa Classifier (4-class), 2 concurrent ===\n")
+    print("\n=== Ray Tune ASHA: 8 trials on RoBERTa Classifier (6-class), 2 concurrent ===\n")
     results = tuner.fit()
     best    = results.get_best_result(metric="f1", mode="max")
     print(f"\n=== BEST TRIAL ===")
