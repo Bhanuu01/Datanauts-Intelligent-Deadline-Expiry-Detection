@@ -1,4 +1,5 @@
 resources:
+  - release-promotion-rbac.yaml
   - inference-staging-deployment.yaml
   - inference-staging-service.yaml
   - inference-canary-deployment.yaml

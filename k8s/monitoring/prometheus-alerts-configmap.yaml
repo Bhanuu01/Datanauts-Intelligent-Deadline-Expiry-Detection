@@ -52,3 +52,31 @@ data:
             annotations:
               summary: Deadline inference failures detected
               description: The deadline inference service has raised one or more inference failures in the last 15 minutes.
+
+          - alert: PlatformServicesDown
+            expr: |
+              up{job="kubernetes-services", kubernetes_namespace="platform", kubernetes_service_name=~"mlflow|minio"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: Shared platform service is down
+              description: MLflow or MinIO has not been scrapeable for at least 2 minutes.
+
+          - alert: NodeDiskPressure
+            expr: kube_node_status_condition{condition="DiskPressure", status="true"} == 1
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: Kubernetes node is under disk pressure
+              description: The Chameleon Kubernetes node has entered DiskPressure and may evict workloads.
+
+          - alert: PodsStuckImagePull
+            expr: kube_pod_container_status_waiting_reason{namespace=~"ml|paperless|platform|monitoring", reason=~"ImagePullBackOff|ErrImagePull"} > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Pod is stuck pulling an image
+              description: One or more workload pods are stuck in ImagePullBackOff or ErrImagePull for over 5 minutes.

@@ -9,6 +9,7 @@ spec:
     spec:
       template:
         spec:
+          serviceAccountName: release-promotion
           restartPolicy: OnFailure
           containers:
             - name: release-promotion
@@ -17,11 +18,17 @@ spec:
               command: ["python", "/app/components/platform_automation/promote_release.py"]
               env:
                 - name: CURRENT_RELEASE_STAGE
-                  value: staging
+                  value: canary
                 - name: PROMOTION_DECISION_PATH
                   value: /data/promotion_decision.json
                 - name: RELEASE_PLAN_PATH
                   value: /data/release_plan.json
+                - name: AUTO_APPLY_RELEASE
+                  value: "true"
+                - name: LIVE_SERVICE_NAME
+                  value: deadline-inference
+                - name: K8S_NAMESPACE
+                  value: ml
               volumeMounts:
                 - name: release-data
                   mountPath: /data
