@@ -4,9 +4,6 @@ resources:
   - data-generator-deployment.yaml
   - online-features-deployment.yaml
   - online-features-service.yaml
-  - inference-deployment.yaml
-  - inference-service.yaml
-  - inference-hpa.yaml
   - onnx-serving-deployment.yaml
   - onnx-serving-service.yaml
   - onnx-serving-hpa.yaml

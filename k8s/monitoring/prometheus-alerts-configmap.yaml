@@ -35,23 +35,23 @@ data:
               summary: Pods in the ml namespace are not healthy
               description: One or more pods in the ml namespace have stayed in a non-running phase for over 5 minutes.
 
-          - alert: InferenceHighLatencyP95
-            expr: histogram_quantile(0.95, sum by (le) (rate(deadline_inference_latency_seconds_bucket[5m]))) > 1
+          - alert: OnnxServingLowConfidence
+            expr: histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_confidence_score_bucket[5m]))) < 0.55
             for: 10m
             labels:
               severity: warning
             annotations:
-              summary: Deadline inference p95 latency is high
-              description: The p95 latency for the deadline inference service has exceeded 1 second for 10 minutes.
+              summary: ONNX serving confidence has degraded
+              description: The p95 observed ONNX confidence score has stayed below 0.55 for 10 minutes.
 
-          - alert: InferenceFailuresDetected
-            expr: increase(deadline_inference_failures_total[15m]) > 0
+          - alert: OnnxServingUncertainSpike
+            expr: increase(deadline_onnx_uncertain_predictions_total[15m]) > 5
             for: 5m
             labels:
               severity: warning
             annotations:
-              summary: Deadline inference failures detected
-              description: The deadline inference service has raised one or more inference failures in the last 15 minutes.
+              summary: ONNX serving uncertain predictions spiked
+              description: The ONNX live serving path produced more than 5 uncertain predictions in the last 15 minutes.
 
           - alert: PlatformServicesDown
             expr: |

@@ -32,7 +32,7 @@ spec:
                 - name: AUTO_APPLY_RELEASE
                   value: "true"
                 - name: LIVE_SERVICE_NAME
-                  value: deadline-inference
+                  value: deadline-onnx-serving
                 - name: K8S_NAMESPACE
                   value: ml
               volumeMounts:

@@ -1,7 +1,7 @@
 ## Optimized ONNX Serving
 
 This directory integrates the serving teammate's quantized ONNX inference path into the
-shared repo layout without replacing the primary `deadline-inference` service.
+shared repo layout as the primary live serving path for the integrated system.
 
 - `app_onnx_quant.py`: FastAPI app for the quantized ONNX token classifier
 - `quantize_onnx.py`: helper script to convert an ONNX export into an INT8-quantized model

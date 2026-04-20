@@ -17,7 +17,7 @@ data:
     PAPERLESS_URL = os.getenv("PAPERLESS_INTERNAL_URL", "http://127.0.0.1:8000")
     INFERENCE_URL = os.getenv(
         "DEADLINE_INFERENCE_URL",
-        "http://deadline-inference.ml.svc.cluster.local:8001/predict",
+        "http://deadline-onnx-serving.ml.svc.cluster.local:8004/predict",
     )
     FEEDBACK_URL = os.getenv(
         "ONLINE_FEATURES_FEEDBACK_URL",

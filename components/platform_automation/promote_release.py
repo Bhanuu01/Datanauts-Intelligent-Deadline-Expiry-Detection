@@ -62,9 +62,9 @@ def build_release_plan(promotion_decision: Dict[str, Any], release_state: Dict[s
         action = "promote" if promote else "reject"
 
     stage_to_app = {
-        "staging": "deadline-inference-staging",
-        "canary": "deadline-inference-canary",
-        "production": "deadline-inference-production",
+        "staging": "deadline-onnx-serving-staging",
+        "canary": "deadline-onnx-serving-canary",
+        "production": "deadline-onnx-serving-production",
     }
 
     return {
@@ -76,7 +76,7 @@ def build_release_plan(promotion_decision: Dict[str, Any], release_state: Dict[s
         "failed_gates": failed_gates,
         "rollback_reasons": rollback_reasons,
         "promotion_reason": promotion_decision.get("reason", "promotion_decision_missing"),
-        "target_service": os.getenv("LIVE_SERVICE_NAME", "deadline-inference"),
+        "target_service": os.getenv("LIVE_SERVICE_NAME", "deadline-onnx-serving"),
         "target_selector": {"app": stage_to_app[next_stage]},
         "candidate_version": promotion_decision.get("candidate_version"),
         "candidate_paths": promotion_decision.get("candidate_paths", {}),
@@ -201,10 +201,10 @@ def apply_release_plan(release_plan: Dict[str, Any], release_state: Dict[str, An
         restart_release_deployments(
             namespace,
             [
-                "deadline-inference",
-                "deadline-inference-staging",
-                "deadline-inference-canary",
-                "deadline-inference-production",
+                "deadline-onnx-serving",
+                "deadline-onnx-serving-staging",
+                "deadline-onnx-serving-canary",
+                "deadline-onnx-serving-production",
             ],
         )
     save_release_state(release_state)
