@@ -6,6 +6,7 @@ PRUNE_AFTER_IMPORT="${PRUNE_AFTER_IMPORT:-1}"
 
 declare -A IMAGE_TO_DOCKERFILE=(
   ["ghcr.io/bhanuu01/datanauts-online-features:latest"]="components/data/online_features/Dockerfile"
+  ["ghcr.io/bhanuu01/datanauts-data-generator:latest"]="components/data/data_generator/Dockerfile"
   ["ghcr.io/bhanuu01/datanauts-data-monitoring:latest"]="components/data/evaluation_monitoring/Dockerfile"
   ["ghcr.io/bhanuu01/datanauts-platform-automation:latest"]="components/platform_automation/Dockerfile"
   ["ghcr.io/bhanuu01/datanauts-inference-runtime:latest"]="components/inference_service/Dockerfile.runtime"
@@ -14,6 +15,7 @@ declare -A IMAGE_TO_DOCKERFILE=(
 
 declare -A IMAGE_TO_CONTEXT=(
   ["ghcr.io/bhanuu01/datanauts-online-features:latest"]="components/data/online_features"
+  ["ghcr.io/bhanuu01/datanauts-data-generator:latest"]="components/data/data_generator"
   ["ghcr.io/bhanuu01/datanauts-data-monitoring:latest"]="components/data/evaluation_monitoring"
   ["ghcr.io/bhanuu01/datanauts-platform-automation:latest"]="."
   ["ghcr.io/bhanuu01/datanauts-inference-runtime:latest"]="."

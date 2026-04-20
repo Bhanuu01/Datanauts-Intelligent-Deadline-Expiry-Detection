@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-generator
+  namespace: ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-generator
+  template:
+    metadata:
+      labels:
+        app: data-generator
+    spec:
+      containers:
+        - name: data-generator
+          image: ghcr.io/bhanuu01/datanauts-data-generator:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE_URL
+              value: http://online-features:8000
+            - name: REQUESTS_PER_MINUTE
+              value: "6"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
