@@ -1,0 +1,15 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir torch --extra-index-url https://download.pytorch.org/whl/cpu
+COPY components/serving/requirements.onnx_quant.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY components/serving/app_onnx_quant.py /app/app_onnx_quant.py
+
+ENV PYTHONUNBUFFERED=1
+ENV ONNX_MODEL_PATH=/models/onnx_quantized_model
+ENV FEEDBACK_LOG_PATH=/data/serving_feedback.jsonl
+
+CMD ["uvicorn", "app_onnx_quant:app", "--host", "0.0.0.0", "--port", "8004"]

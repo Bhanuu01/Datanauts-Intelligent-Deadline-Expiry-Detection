@@ -267,6 +267,10 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
         })
         if report:
             mlflow.log_text(report, "ner_classification_report.txt")
+        model_dir = f"{OUTPUT_DIR}-{model_name}"
+        if os.path.isdir(model_dir):
+            mlflow.log_artifacts(model_dir, artifact_path="model")
+            print(f"Model weights uploaded → MinIO (artifact_path=model)")
         print(f"Logged {model_name} → {MLFLOW_URI}")
 
 
