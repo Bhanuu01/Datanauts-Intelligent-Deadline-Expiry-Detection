@@ -1,0 +1,11 @@
+{
+  "document_id": "doc_10485",
+  "deadlines": [
+    {
+      "extracted_text": "May 1 2026",
+      "event_type": "DUE_DATE",
+      "confidence": 0.94,
+      "actionable": true
+    }
+  ]
+}

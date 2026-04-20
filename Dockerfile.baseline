@@ -1,0 +1,8 @@
+FROM python:3.11-slim
+WORKDIR /app
+
+# The --extra-index-url forces ALL packages to look for the tiny CPU versions first
+RUN pip install --no-cache-dir fastapi uvicorn transformers torch --extra-index-url https://download.pytorch.org/whl/cpu
+
+COPY app_baseline.py .
+CMD ["uvicorn", "app_baseline:app", "--host", "0.0.0.0", "--port", "8000"]

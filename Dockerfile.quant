@@ -1,0 +1,7 @@
+FROM python:3.11-slim
+WORKDIR /app
+# Force CPU-only PyTorch to save space
+RUN pip install --no-cache-dir torch --extra-index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir fastapi uvicorn transformers
+COPY app_quant.py .
+CMD ["uvicorn", "app_quant:app", "--host", "0.0.0.0", "--port", "8003"]
