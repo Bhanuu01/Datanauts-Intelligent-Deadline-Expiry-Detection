@@ -4,6 +4,30 @@ from transformers import pipeline
 
 CONFIDENCE_THRESHOLD = 0.7
 
+_PIPELINE_CACHE: dict = {}
+
+
+def _get_pipelines(clf_model_path, ner_model_path):
+    """Return (clf_pipe, ner_pipe), loading from cache when already initialised."""
+    cache_key = (clf_model_path, ner_model_path)
+    if cache_key not in _PIPELINE_CACHE:
+        _PIPELINE_CACHE[cache_key] = (
+            pipeline(
+                "text-classification",
+                model=clf_model_path,
+                top_k=None,
+                device=-1,
+            ),
+            pipeline(
+                "token-classification",
+                model=ner_model_path,
+                aggregation_strategy=None,
+                device=-1,
+            ),
+        )
+    return _PIPELINE_CACHE[cache_key]
+
+
 CLF_LABEL2ID = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3, "agreement": 4, "notice_period": 5}
 CLF_ID2LABEL = {v: k for k, v in CLF_LABEL2ID.items()}
 
@@ -83,18 +107,7 @@ def predict(
     if not sentences:
         return {"contract_id": contract_id, "has_deadline": False, "uncertain": False, "multi_date_conflict": False, "events": []}
 
-    clf_pipe = pipeline(
-        "text-classification",
-        model=clf_model_path,
-        top_k=None,
-        device=-1,
-    )
-    ner_pipe = pipeline(
-        "token-classification",
-        model=ner_model_path,
-        aggregation_strategy=None,
-        device=-1,
-    )
+    clf_pipe, ner_pipe = _get_pipelines(clf_model_path, ner_model_path)
 
     groups = {}  # event_type → [(sentence, confidence, all_scores)]
     for sent in sentences:
@@ -127,7 +140,11 @@ def predict(
         deadline_type   = "computable"
 
         for sent, _, _ in items:
-            ner_out  = ner_pipe(sent)
+            try:
+                ner_out = ner_pipe(sent)
+            except Exception as ner_err:
+                print(f"[predict] WARNING: NER pipeline failed on sentence (skipping): {ner_err}")
+                continue
             entities = _extract_entities(ner_out, allowed)
             for ent in entities:
                 if ent["entity_type"] in ("EXP_DATE", "START_DATE", "NOTICE_DATE"):

@@ -14,16 +14,14 @@ from transformers import (
     TrainingArguments, Trainer, DataCollatorForTokenClassification,
 )
 from seqeval.metrics import f1_score, precision_score, recall_score, classification_report
+from env_config import setup_env, CFG
 
-os.environ["AWS_ACCESS_KEY_ID"]      = "datanauts-key"
-os.environ["AWS_SECRET_ACCESS_KEY"]  = "datanauts-secret"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://129.114.27.190:9000"
-os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
+setup_env()
 
-MLFLOW_URI = "http://129.114.27.190:8000"
+MLFLOW_URI = os.environ["MLFLOW_TRACKING_URI"]
 EXPERIMENT = "deadline-detection-ner-ray-tune"
 BASE_MODEL = "dslim/bert-base-NER"
-DATA_PATH  = "/app/data/deadline_sentences"
+DATA_PATH  = CFG["data"]["sentence_data_path"]
 
 LABEL_LIST = [
     "O",
@@ -54,8 +52,8 @@ class WeightedNERTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
 
-def load_ner_data():
-    dd        = load_from_disk(DATA_PATH)
+def load_ner_data(data_path=DATA_PATH):
+    dd        = load_from_disk(data_path)
     train_ds  = dd["train"].select_columns(["tokens", "ner_tags"])
     val_ds    = dd["val"].select_columns(["tokens", "ner_tags"])
     test_ds   = dd["test"].select_columns(["tokens", "ner_tags"])
@@ -101,8 +99,10 @@ def train_trial(config):
             "gpu":            torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
             "filter_none":    True,
         })
+        mlflow.set_tag("label_source", "silver_regex")
 
-        train_ds, val_ds, test_ds = load_ner_data()
+        data = ray.get(config["data_ref"])
+        train_ds, val_ds, test_ds = data["train"], data["val"], data["test"]
         tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
 
         def tokenize_and_align(examples):
@@ -155,7 +155,7 @@ def train_trial(config):
         trainer = WeightedNERTrainer(
             model=model, args=t_args,
             train_dataset=tok_train, eval_dataset=tok_val,
-            tokenizer=tokenizer,
+            processing_class=tokenizer,
             data_collator=DataCollatorForTokenClassification(tokenizer),
             compute_metrics=compute_metrics,
         )
@@ -186,11 +186,18 @@ def train_trial(config):
 
 def main():
     ray.init(ignore_reinit_error=True)
+
+    # Pre-load dataset once; each trial retrieves via ray.get() to avoid N disk reads.
+    print("Pre-loading NER dataset into Ray object store...")
+    _train, _val, _test = load_ner_data()
+    data_ref = ray.put({"train": _train, "val": _val, "test": _test})
+
     search_space = {
         "learning_rate":  tune.loguniform(1e-5, 5e-5),
         "batch_size":     tune.choice([8, 16]),
         "epochs":         tune.choice([3, 5]),
         "max_seq_length": tune.choice([128, 256]),
+        "data_ref":       data_ref,
     }
     scheduler = ASHAScheduler(max_t=5, grace_period=1, reduction_factor=2)
     tuner = tune.Tuner(
@@ -205,7 +212,7 @@ def main():
             storage_path="/tmp/ray_results",
         ),
     )
-    print("\n=== Ray Tune ASHA: 8 trials on BERT NER (7-class), 2 concurrent ===\n")
+    print("\n=== Ray Tune ASHA: 8 trials on BERT NER (9-class), 2 concurrent ===\n")
     results = tuner.fit()
     best    = results.get_best_result(metric="f1", mode="max")
     print(f"\n=== BEST TRIAL ===")
@@ -218,7 +225,12 @@ def main():
     mlflow.set_experiment(EXPERIMENT)
     with mlflow.start_run(run_name="RAY_TUNE_NER_BEST_SUMMARY"):
         mlflow.log_params({**best.config, "search_method": "Ray Tune ASHA", "total_trials": len(results)})
-        mlflow.log_metrics({"best_f1": best.metrics["f1"]})
+        summary_metrics = {"best_f1": best.metrics["f1"]}
+        for entity in ["EXP_DATE", "START_DATE", "DURATION", "NOTICE_DATE"]:
+            key = f"test_{entity}_f1"
+            if key in best.metrics:
+                summary_metrics[f"best_{entity}_f1"] = best.metrics[key]
+        mlflow.log_metrics(summary_metrics)
     print(f"\nAll trials → {MLFLOW_URI} | Experiment: {EXPERIMENT}\n")
     ray.shutdown()
 

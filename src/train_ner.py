@@ -9,13 +9,11 @@ from transformers import (
     EarlyStoppingCallback,
 )
 from seqeval.metrics import f1_score, precision_score, recall_score, classification_report
+from env_config import setup_env, CFG
 
-os.environ["AWS_ACCESS_KEY_ID"]      = "datanauts-key"
-os.environ["AWS_SECRET_ACCESS_KEY"]  = "datanauts-secret"
-os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://129.114.27.190:9000"
+setup_env()
 
-MLFLOW_URI  = "http://129.114.27.190:8000"
+MLFLOW_URI  = os.environ["MLFLOW_TRACKING_URI"]
 EXPERIMENT  = "deadline-detection-ner"
 DATA_PATH   = "./data/deadline_sentences"
 OUTPUT_DIR  = "/tmp/deadline-ner"
@@ -33,7 +31,7 @@ ID2LABEL    = {i: l for i, l in enumerate(LABEL_LIST)}
 MONTHS = {
     "january","february","march","april","may","june",
     "july","august","september","october","november","december",
-    "jan","feb","mar","apr","jun","jul","aug","sep","oct","nov","dec",
+    "jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec",
 }
 
 CONFIGS = {
@@ -54,12 +52,12 @@ CONFIGS = {
         "batch_size": 16, "max_seq_length": 256, "fp16": True,
     },
     "bert_ner_v4": {
-        "base_model": "dslim/bert-base-NER", "epochs": 5, "learning_rate": 2e-5,
-        "batch_size": 16, "max_seq_length": 256, "fp16": True,
+        "base_model": "dslim/bert-base-NER", "epochs": 5, "learning_rate": 3e-5,
+        "batch_size": 8,  "max_seq_length": 256, "fp16": True,
     },
     "bert_ner_v5": {
-        "base_model": "dslim/bert-base-NER", "epochs": 5, "learning_rate": 2e-5,
-        "batch_size": 16, "max_seq_length": 256, "fp16": True,
+        "base_model": "dslim/bert-base-NER", "epochs": 7, "learning_rate": 2e-5,
+        "batch_size": 8,  "max_seq_length": 128, "fp16": True,
     },
     "bert_base_cased": {
         "base_model": "bert-base-cased", "epochs": 3, "learning_rate": 2e-5,
@@ -187,7 +185,7 @@ def train_model(model_name, cfg, tok_train, tok_val, tok_test, tokenizer):
         per_device_eval_batch_size=cfg["batch_size"],
         learning_rate=cfg["learning_rate"],
         weight_decay=0.01,
-        warmup_steps=50,
+        warmup_ratio=0.06,
         fp16=cfg["fp16"] and torch.cuda.is_available(),
         eval_strategy="epoch",
         save_strategy="epoch",
@@ -224,6 +222,10 @@ def train_model(model_name, cfg, tok_train, tok_val, tok_test, tokenizer):
         "eval_recall":    recall_score(true_labels, true_preds),
         "eval_loss":      preds_out.metrics.get("test_loss", 0),
     }
+    for entity in ["EXP_DATE", "START_DATE", "DURATION", "NOTICE_DATE"]:
+        k = f"test_{entity}_f1"
+        if k in preds_out.metrics:
+            test_result[f"eval_{entity}_f1"] = preds_out.metrics[k]
     print(f"Done! Time: {train_time:.1f}s | Test F1: {test_result['eval_f1']:.4f}")
     return trainer.model, train_result, test_result, train_time, report
 
@@ -265,12 +267,19 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
             "test_NOTICE_DATE_f1":   test_result.get("eval_NOTICE_DATE_f1",   0),
             "test_loss":             test_result.get("eval_loss", 0),
         })
+        mlflow.set_tag("label_source", "silver_regex")
         if report:
             mlflow.log_text(report, "ner_classification_report.txt")
         model_dir = f"{OUTPUT_DIR}-{model_name}"
         if os.path.isdir(model_dir):
             mlflow.log_artifacts(model_dir, artifact_path="model")
             print(f"Model weights uploaded → MinIO (artifact_path=model)")
+            try:
+                run_id = mlflow.active_run().info.run_id
+                mlflow.register_model(f"runs:/{run_id}/model", model_name)
+                print(f"Model registered in MLflow Registry as '{model_name}'")
+            except Exception as reg_err:
+                print(f"[WARN] Model Registry unavailable: {reg_err}")
         print(f"Logged {model_name} → {MLFLOW_URI}")
 
 

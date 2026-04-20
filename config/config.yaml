@@ -27,12 +27,18 @@ training:
   fp16: true
 
 mlflow:
-  tracking_uri: "http://129.114.27.190:8000"
-  s3_endpoint: "http://129.114.27.190:9000"
+  tracking_uri: "http://129.114.27.190:8000"   # override via MLFLOW_TRACKING_URI env var
+  s3_endpoint: "http://129.114.27.190:9000"     # override via MLFLOW_S3_ENDPOINT_URL env var
   experiment_ner: "deadline-detection-ner"
   experiment_clf: "deadline-detection-classifier"
   experiment_e2e: "deadline-detection-e2e"
   experiment_cross_domain: "deadline-detection-cross-domain"
+
+# MinIO / S3 credentials — NEVER store real values here.
+# Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY as environment variables.
+# See .env.example for the full list of required variables.
+minio:
+  _credentials_note: "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY as env vars"
 
 eval:
   cross_domain_eval: false  # set true and pass --cross_domain_samples to evaluate.py

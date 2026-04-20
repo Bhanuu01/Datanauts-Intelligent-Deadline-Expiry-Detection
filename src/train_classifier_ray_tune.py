@@ -15,16 +15,14 @@ from transformers import (
     TrainingArguments, Trainer, DataCollatorWithPadding,
 )
 from sklearn.metrics import f1_score as skf1, accuracy_score
+from env_config import setup_env, CFG
 
-os.environ["AWS_ACCESS_KEY_ID"]      = "datanauts-key"
-os.environ["AWS_SECRET_ACCESS_KEY"]  = "datanauts-secret"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://129.114.27.190:9000"
-os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
+setup_env()
 
-MLFLOW_URI  = "http://129.114.27.190:8000"
+MLFLOW_URI  = os.environ["MLFLOW_TRACKING_URI"]
 EXPERIMENT  = "deadline-detection-classifier-ray-tune"
 BASE_MODEL  = "roberta-base"
-DATA_PATH   = "/app/data/deadline_sentences"
+DATA_PATH   = CFG["data"]["sentence_data_path"]
 NUM_LABELS  = 6
 
 CLF_LABEL2ID = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3, "agreement": 4, "notice_period": 5}
@@ -76,7 +74,7 @@ def compute_clf_metrics(p):
         "f1":       float(skf1(labels, preds, average="macro",    zero_division=0)),
         "accuracy": float(accuracy_score(labels, preds)),
     }
-    for i, name in enumerate(["none", "expiration", "effective", "renewal"]):
+    for i, name in enumerate(["none", "expiration", "effective", "renewal", "agreement", "notice_period"]):
         metrics[f"f1_{name}"] = float(skf1(labels, preds, labels=[i], average="macro", zero_division=0))
     return metrics
 
@@ -89,7 +87,6 @@ def train_trial(config):
     epochs          = config["epochs"]
     none_ratio      = config["none_ratio"]
     max_seq_length  = config["max_seq_length"]
-    label_smoothing = config["label_smoothing"]
     run_name        = f"clf_lr{lr:.1e}_bs{batch_size}_wd{weight_decay:.0e}_ep{epochs}"
 
     mlflow.set_tracking_uri(MLFLOW_URI)
@@ -103,7 +100,6 @@ def train_trial(config):
             "epochs":          epochs,
             "none_ratio":      none_ratio,
             "max_seq_length":  max_seq_length,
-            "label_smoothing": label_smoothing,
             "base_model":      BASE_MODEL,
             "search_method":   "Ray Tune ASHA",
             "num_labels":      NUM_LABELS,
@@ -111,10 +107,10 @@ def train_trial(config):
             "gpu":             torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
         })
 
-        dd        = load_from_disk(DATA_PATH)
-        train_ds  = downsample_none(dd["train"], none_ratio, seed=42)
-        val_ds    = dd["val"]
-        test_ds   = dd["test"]
+        raw       = ray.get(config["data_ref"])
+        train_ds  = downsample_none(raw["train"], none_ratio, seed=42)
+        val_ds    = raw["val"]
+        test_ds   = raw["test"]
         class_weights = compute_class_weights(train_ds)
 
         tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
@@ -145,7 +141,6 @@ def train_trial(config):
             learning_rate=lr,
             warmup_ratio=warmup_ratio,
             weight_decay=weight_decay,
-            label_smoothing_factor=label_smoothing,
             fp16=torch.cuda.is_available(),
             eval_strategy="epoch",
             save_strategy="epoch",
@@ -159,7 +154,7 @@ def train_trial(config):
             class_weights=class_weights,
             model=model, args=t_args,
             train_dataset=tok_train, eval_dataset=tok_val,
-            tokenizer=tokenizer,
+            processing_class=tokenizer,
             data_collator=DataCollatorWithPadding(tokenizer),
             compute_metrics=compute_clf_metrics,
         )
@@ -176,7 +171,7 @@ def train_trial(config):
 
         per_class_f1 = {
             f"test_f1_{name}": float(skf1(labels_flat, preds_flat, labels=[i], average="macro", zero_division=0))
-            for i, name in enumerate(["none", "expiration", "effective", "renewal"])
+            for i, name in enumerate(["none", "expiration", "effective", "renewal", "agreement", "notice_period"])
         }
 
         mlflow.log_metrics({
@@ -194,15 +189,21 @@ def train_trial(config):
 
 def main():
     ray.init(ignore_reinit_error=True)
+
+    # Pre-load dataset once; each trial retrieves via ray.get() to avoid N disk reads.
+    print("Pre-loading classifier dataset into Ray object store...")
+    _raw = load_from_disk(DATA_PATH)
+    data_ref = ray.put({"train": _raw["train"], "val": _raw["val"], "test": _raw["test"]})
+
     search_space = {
         "learning_rate":   tune.loguniform(1e-5, 1e-4),
+        "data_ref":        data_ref,
         "batch_size":      tune.choice([8, 16, 32]),
         "warmup_ratio":    tune.uniform(0.05, 0.20),
         "weight_decay":    tune.loguniform(1e-3, 0.1),
         "epochs":          tune.choice([3, 5, 7]),
         "none_ratio":      tune.choice([5, 8, 10, 12]),
         "max_seq_length":  tune.choice([128, 256]),
-        "label_smoothing": tune.choice([0.0, 0.05, 0.1]),
     }
     scheduler = ASHAScheduler(max_t=7, grace_period=2, reduction_factor=2)
     tuner = tune.Tuner(
@@ -217,7 +218,7 @@ def main():
             storage_path="/tmp/ray_results",
         ),
     )
-    print("\n=== Ray Tune ASHA: 8 trials on RoBERTa Classifier (4-class), 2 concurrent ===\n")
+    print("\n=== Ray Tune ASHA: 16 trials on RoBERTa Classifier (6-class), 2 concurrent ===\n")
     results = tuner.fit()
     best    = results.get_best_result(metric="f1", mode="max")
     print(f"\n=== BEST TRIAL ===")
@@ -229,7 +230,6 @@ def main():
     print(f"  none_ratio:    {best.config['none_ratio']}")
     print(f"  max_seq_length:{best.config['max_seq_length']}")
     print(f"  weight_decay:  {best.config['weight_decay']:.2e}")
-    print(f"  label_smoothing:{best.config['label_smoothing']}")
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT)
     with mlflow.start_run(run_name="RAY_TUNE_CLF_BEST_SUMMARY"):

@@ -6,19 +6,19 @@ Modes:
   --retrain   Read human-labelled queue entries; append to training data; trigger retrain.
   --status    Print queue size and distance to retrain trigger.
 """
-import os, json, argparse, subprocess
+import os, sys, json, argparse, subprocess, fcntl
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from datetime import datetime
+from env_config import setup_env, CFG
+
+setup_env()
 
 QUEUE_FILE           = "./data/uncertain_samples.jsonl"
 CONFIDENCE_THRESHOLD = 0.7
 RETRAIN_TRIGGER_N    = 100
 
-MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://129.114.27.190:8000")
+MLFLOW_URI = os.environ["MLFLOW_TRACKING_URI"]
 EXPERIMENT = "deadline-feedback"
-
-os.environ["AWS_ACCESS_KEY_ID"]      = "datanauts-key"
-os.environ["AWS_SECRET_ACCESS_KEY"]  = "datanauts-secret"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://129.114.27.190:9000"
 
 
 def _queue_size():
@@ -57,18 +57,22 @@ def collect(predictions_path, threshold, queue_file, trigger_n):
     os.makedirs(os.path.dirname(os.path.abspath(queue_file)), exist_ok=True)
     new_entries = []
     with open(queue_file, "a") as out:
-        for event in uncertain_events:
-            entry = {
-                "contract_id":      result.get("contract_id", "unknown"),
-                "sentence":         event.get("source_sentence", ""),
-                "predicted_label":  event.get("event_type", ""),
-                "confidence":       event.get("confidence", 0),
-                "class_scores":     event.get("class_scores", {}),
-                "timestamp":        datetime.utcnow().isoformat(),
-                "human_label":      None,
-            }
-            out.write(json.dumps(entry) + "\n")
-            new_entries.append(entry)
+        fcntl.flock(out, fcntl.LOCK_EX)
+        try:
+            for event in uncertain_events:
+                entry = {
+                    "contract_id":      result.get("contract_id", "unknown"),
+                    "sentence":         event.get("source_sentence", ""),
+                    "predicted_label":  event.get("event_type", ""),
+                    "confidence":       event.get("confidence", 0),
+                    "class_scores":     event.get("class_scores", {}),
+                    "timestamp":        datetime.utcnow().isoformat(),
+                    "human_label":      None,
+                }
+                out.write(json.dumps(entry) + "\n")
+                new_entries.append(entry)
+        finally:
+            fcntl.flock(out, fcntl.LOCK_UN)
 
     q_size = _queue_size()
     print(f"[feedback] Added {len(new_entries)} uncertain events → queue: {q_size} / {trigger_n}")
@@ -99,6 +103,17 @@ def retrain(clf_model, next_version, queue_file):
 
     print(f"[feedback] Found {len(labelled)} labelled entries.")
 
+    model_name = f"roberta_clf_{next_version}"
+    _valid_clf_models = [
+        "baseline", "roberta_clf_v1", "roberta_clf_v2", "roberta_clf_v3",
+        "roberta_clf_v4", "roberta_clf_v5", "roberta_clf_v6", "roberta_clf_v7",
+    ]
+    if model_name not in _valid_clf_models:
+        print(f"[feedback] ERROR: '{model_name}' is not a known classifier config.")
+        print(f"  Valid choices: {_valid_clf_models}")
+        print(f"  Add the config to src/train_classifier.py::CONFIGS first, then retry.")
+        return
+
     additions_path = "./data/feedback_additions.jsonl"
     with open(additions_path, "w") as f:
         for e in labelled:
@@ -113,10 +128,14 @@ def retrain(clf_model, next_version, queue_file):
             }) + "\n")
 
     print(f"[feedback] Feedback training samples written to {additions_path}")
-    print(f"[feedback] Triggering retrain: roberta_clf_{next_version}")
+    print(f"[feedback] Triggering retrain: {model_name}")
 
     result = subprocess.run(
-        ["python", "src/train_classifier.py", "--model", f"roberta_clf_{next_version}"],
+        [
+            sys.executable, "src/train_classifier.py",
+            "--model", model_name,
+            "--extra_data", additions_path,
+        ],
         capture_output=False,
     )
     if result.returncode == 0:

@@ -1,20 +1,21 @@
-import os, json, argparse
+import os, sys, json, argparse
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from collections import defaultdict
 from dateutil import parser as dateutil_parser
 from datasets import load_dataset, load_from_disk
 import mlflow
-
+from transformers import pipeline as hf_pipeline
+from sklearn.metrics import classification_report as skr
+from env_config import setup_env, CFG
 from predict import predict
 
-MLFLOW_URI  = os.getenv("MLFLOW_TRACKING_URI", "http://129.114.27.190:8000")
+setup_env()
+
+MLFLOW_URI  = os.environ["MLFLOW_TRACKING_URI"]
 EXPERIMENT  = "deadline-detection-e2e"
 DATASET_ID  = "tanvitakavane/datanauts_project_cuad-deadline-ner-version2"
 DATA_PATH   = "./data/deadline_sentences"
 DATE_WINDOW = 30   # days — "within N days" match
-
-os.environ["AWS_ACCESS_KEY_ID"]      = "datanauts-key"
-os.environ["AWS_SECRET_ACCESS_KEY"]  = "datanauts-secret"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://129.114.27.190:9000"
 
 
 def dates_within(pred_date, gt_date, window=DATE_WINDOW):
@@ -131,6 +132,8 @@ def run_evaluation(clf_model_path, ner_model_path, threshold=0.7):
     for et, m in per_type.items():
         tot = max(m["total_gt"], 1)
         print(f"  [{et}]  covered={100*m['covered']/tot:.0f}%  exact={100*m['exact']/tot:.0f}%  within30={100*m['within_30']/tot:.0f}%")
+    print("  NOTE: 'renewal' and 'notice_period' events have no ISO date ground truth in")
+    print("        the dataset — their date-match coverage is not tracked above.")
     print("=========================================\n")
 
     mlflow.set_tracking_uri(MLFLOW_URI)
@@ -175,10 +178,6 @@ def run_cross_domain_evaluation(samples_path, clf_model_path, ner_model_path, th
     Reports per-class accuracy and logs results to MLflow under
     experiment 'deadline-detection-cross-domain'.
     """
-    import json
-    from transformers import pipeline as hf_pipeline
-    from sklearn.metrics import classification_report as skr
-
     with open(samples_path) as f:
         samples = json.load(f)
 
