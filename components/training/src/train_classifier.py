@@ -137,7 +137,7 @@ def load_classifier_data(none_ratio, seed=42, feedback_file=None):
     return train_ds, val_ds, test_ds
 
 
-def compute_class_weights(train_ds, max_weight=10.0):
+def compute_class_weights(train_ds, max_weight=20.0):
     labels  = [int(x) for x in train_ds["classifier_label"]]
     counts  = Counter(labels)
     total   = sum(counts.values())
@@ -243,6 +243,10 @@ def train_classifier(model_name, cfg, tok_train, tok_val, tok_test, tokenizer, c
         "eval_accuracy": float(accuracy_score(labels, preds)),
         "eval_loss":     preds_out.metrics.get("test_loss", 0),
     }
+    for i, name in enumerate(["none", "expiration", "effective", "renewal", "agreement", "notice_period"]):
+        test_result[f"eval_f1_{name}"] = float(
+            skf1(labels, preds, labels=[i], average="macro", zero_division=0)
+        )
     print(f"Done! Time: {train_time:.1f}s | Test F1: {test_result['eval_f1']:.4f} | Accuracy: {test_result['eval_accuracy']:.4f}")
     return trainer.model, train_result, test_result, train_time, report
 

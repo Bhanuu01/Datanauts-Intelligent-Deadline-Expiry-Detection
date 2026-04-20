@@ -1,8 +1,8 @@
-import os, re, time, platform, argparse, random
+import os, re, json, time, platform, argparse, random
 import torch, torch.nn as nn, mlflow, mlflow.pytorch
 import numpy as np
 from collections import Counter
-from datasets import load_from_disk
+from datasets import load_from_disk, Dataset, concatenate_datasets as hf_concat
 from transformers import (
     AutoTokenizer, AutoModelForTokenClassification,
     TrainingArguments, Trainer, DataCollatorForTokenClassification,
@@ -102,6 +102,79 @@ def load_ner_data():
     test_ds   = dd["test"].select_columns(["tokens", "ner_tags"])
     print(f"Train (all): {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)} sentences")
     return train_ds, val_ds, test_ds
+
+
+_ML_PAT  = r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
+_MS_PAT  = r"(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+_M_PAT   = r"(?:" + _ML_PAT + r"|" + _MS_PAT + r")\.?"
+_AUG_DATE_RE = re.compile("|".join([
+    _M_PAT + r"\s+\d{1,2}[,.]?\s+\d{4}",
+    r"\d{1,2}\s+" + _M_PAT + r"\s+\d{4}",
+    r"\d{1,2}/\d{1,2}/\d{2,4}",
+    r"\d{4}-\d{2}-\d{2}",
+    _M_PAT + r"\s+\d{4}",
+]), re.IGNORECASE)
+_NW = r"(?:one|two|three|four|five|six|seven|eight|nine|ten|twelve|thirty|sixty|ninety)"
+_U  = r"(?:year|month|day|week|quarter)"
+_CAL = r"(?:calendar\s+)?"
+_AUG_DUR_RE = re.compile("|".join([
+    r"\d+\s*\(\d+\)\s*" + _CAL + _U + r"s?",
+    _NW + r"\s*\(\d+\)\s*" + _CAL + _U + r"s?",
+    r"\(\d+\)\s*" + _CAL + _U + r"s?",
+    r"\d+[\s\-]+" + _CAL + _U + r"s?",
+    _NW + r"[\s\-]+" + _CAL + _U + r"s?",
+]), re.IGNORECASE)
+
+
+def _aug_apply_bio(tags, offsets, span_s, span_e, b_tag, i_tag):
+    first = True
+    for idx, (ts, te) in enumerate(offsets):
+        if te <= span_s or ts >= span_e:
+            continue
+        tags[idx] = LABEL2ID[b_tag] if first else LABEL2ID[i_tag]
+        first = False
+
+
+def load_ner_extra_data(extra_data_path):
+    """Read augmentation JSONL, BIO-tag notice_period→NOTICE_DATE and agreement→START_DATE."""
+    rows = []
+    with open(extra_data_path) as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+            clf = int(item.get("classifier_label", -1))
+            if clf not in (4, 5):
+                continue
+            tokens = item["sentence"].split()
+            if len(tokens) < 5:
+                continue
+            text    = " ".join(tokens)
+            tags    = [LABEL2ID["O"]] * len(tokens)
+            offsets, pos = [], 0
+            for tok in tokens:
+                offsets.append((pos, pos + len(tok)))
+                pos += len(tok) + 1
+            if clf == 5:  # notice_period → NOTICE_DATE
+                dm = list(_AUG_DATE_RE.finditer(text))
+                if dm:
+                    _aug_apply_bio(tags, offsets, dm[0].start(), dm[0].end(), "B-NOTICE_DATE", "I-NOTICE_DATE")
+                else:
+                    for m in _AUG_DUR_RE.finditer(text):
+                        _aug_apply_bio(tags, offsets, m.start(), m.end(), "B-NOTICE_DATE", "I-NOTICE_DATE")
+            else:  # agreement (4) → START_DATE
+                dm = list(_AUG_DATE_RE.finditer(text))
+                if dm:
+                    _aug_apply_bio(tags, offsets, dm[0].start(), dm[0].end(), "B-START_DATE", "I-START_DATE")
+            rows.append({"tokens": tokens, "ner_tags": tags})
+    if not rows:
+        print(f"[extra_data] No valid NER augmentation rows in {extra_data_path}")
+        return None
+    print(f"[extra_data] Loaded {len(rows)} NER augmentation examples from {extra_data_path}")
+    return Dataset.from_list(rows)
 
 
 def tokenize_dataset(train_ds, val_ds, test_ds, tokenizer, max_length):
@@ -278,11 +351,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, choices=list(CONFIGS.keys()),
                         help="Which NER model variant to run")
+    parser.add_argument("--extra_data", default=None,
+                        help="Optional path to augmentation JSONL with notice_period/agreement sentences")
     args = parser.parse_args()
 
     set_seeds(42)
     cfg = CONFIGS[args.model]
     train_ds, val_ds, test_ds = load_ner_data()
+    if args.extra_data:
+        extra_ds = load_ner_extra_data(args.extra_data)
+        if extra_ds is not None:
+            train_ds = hf_concat([train_ds, extra_ds])
+            print(f"[extra_data] Train set expanded to {len(train_ds)} sentences")
 
     if args.model == "baseline":
         t0      = time.time()

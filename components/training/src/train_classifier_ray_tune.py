@@ -58,7 +58,7 @@ def downsample_none(ds, none_ratio, seed=42):
     return ds.select(keep)
 
 
-def compute_class_weights(train_ds, max_weight=10.0):
+def compute_class_weights(train_ds, max_weight=20.0):
     labels  = [int(x) for x in train_ds["classifier_label"]]
     counts  = Counter(labels)
     total   = sum(counts.values())
