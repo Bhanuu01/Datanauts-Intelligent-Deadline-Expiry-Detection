@@ -8,14 +8,14 @@ data:
     groups:
       - name: datanauts-platform
         rules:
-          - alert: DeadlineInferenceDown
-            expr: up{job="kubernetes-services", kubernetes_namespace="ml", kubernetes_service_name="deadline-inference"} == 0
+          - alert: LiveDeadlineServingDown
+            expr: up{job="kubernetes-services", kubernetes_namespace="ml", kubernetes_service_name="deadline-onnx-serving"} == 0
             for: 2m
             labels:
               severity: critical
             annotations:
-              summary: Deadline inference service is down
-              description: The deadline inference service in the ml namespace has not been scrapeable for 2 minutes.
+              summary: Live deadline serving service is down
+              description: The ONNX live deadline serving service in the ml namespace has not been scrapeable for 2 minutes.
 
           - alert: OnlineFeaturesDown
             expr: up{job="kubernetes-services", kubernetes_namespace="ml", kubernetes_service_name="online-features"} == 0
@@ -117,12 +117,3 @@ data:
             annotations:
               summary: Kubernetes node is under memory pressure
               description: The Chameleon Kubernetes node has entered MemoryPressure and workloads may degrade or be evicted.
-
-          - alert: OnnxServingDown
-            expr: up{job="kubernetes-services", kubernetes_namespace="ml", kubernetes_service_name="deadline-onnx-serving"} == 0
-            for: 2m
-            labels:
-              severity: critical
-            annotations:
-              summary: ONNX serving service is down
-              description: The ONNX serving path in the ml namespace has not been scrapeable for 2 minutes.
