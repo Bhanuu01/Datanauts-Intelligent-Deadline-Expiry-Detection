@@ -8,8 +8,12 @@ RUN pip install --no-cache-dir torch --extra-index-url https://download.pytorch.
 RUN pip install --no-cache-dir fastapi uvicorn transformers optimum[onnxruntime] prometheus-fastapi-instrumentator prometheus_client
 
 # 3. Copy the hybrid model folder
-COPY onnx_quantized_model/ ./onnx_quantized_model/
+# ... (pip install commands) ...
+
+# Copy BOTH hybrid model folders into the container
+COPY onnx_quantized_clf/ ./onnx_quantized_clf/
+COPY onnx_quantized_ner/ ./onnx_quantized_ner/
+
 COPY app_onnx_quant.py .
 
 CMD ["uvicorn", "app_onnx_quant:app", "--host", "0.0.0.0", "--port", "8004"]
-
