@@ -1,0 +1,13 @@
+resources:
+  - namespace.yaml
+  - prometheus-rbac.yaml
+  - kube-state-metrics.yaml
+  - prometheus-configmap.yaml
+  - prometheus-alerts-configmap.yaml
+  - prometheus-deployment.yaml
+  - prometheus-service.yaml
+  - prometheus-ingress.yaml
+  - grafana-datasource-configmap.yaml
+  - grafana-deployment.yaml
+  - grafana-service.yaml
+  - grafana-ingress.yaml

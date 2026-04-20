@@ -26,3 +26,4 @@ This branch turns the project from role-separated milestone work into a single d
 3. Add the serving teammate's final API or route Paperless directly to `deadline-inference`.
 4. Patch Paperless upload flow so the complementary ML feature is exercised in the normal user path.
 5. Add Prometheus/Grafana manifests and alert rules for queue depth, pod health, and inference failures.
+6. Expose `/metrics` from the ML-facing services so operational and model-serving metrics can be scraped directly in production.

@@ -4,6 +4,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from typing import Dict
 from typing import List
@@ -12,7 +13,12 @@ from typing import Optional
 from dateutil import parser as dateutil_parser
 from fastapi import FastAPI
 from fastapi import HTTPException
+from prometheus_client import CONTENT_TYPE_LATEST
+from prometheus_client import Counter
+from prometheus_client import Histogram
+from prometheus_client import generate_latest
 from pydantic import BaseModel
+from starlette.responses import Response
 
 
 DATE_RE = re.compile(
@@ -39,6 +45,26 @@ class PredictRequest(BaseModel):
 
 
 app = FastAPI(title="Deadline Detection Inference Service")
+
+PREDICTION_REQUESTS = Counter(
+    "deadline_inference_requests_total",
+    "Total number of inference requests processed by the deadline inference service.",
+    labelnames=("mode",),
+)
+PREDICTION_FAILURES = Counter(
+    "deadline_inference_failures_total",
+    "Total number of inference failures raised by the deadline inference service.",
+)
+PREDICTION_EVENTS = Counter(
+    "deadline_inference_events_total",
+    "Total number of events returned by the deadline inference service.",
+    labelnames=("mode",),
+)
+PREDICTION_LATENCY = Histogram(
+    "deadline_inference_latency_seconds",
+    "Latency of prediction requests handled by the deadline inference service.",
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+)
 
 
 def split_sentences(text: str) -> List[str]:
@@ -91,8 +117,14 @@ def fallback_predict(document_id: str, sentences: List[str]) -> Dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def load_predict_module():
-    module_path = Path(__file__).resolve().parent.parent / "training" / "src" / "predict.py"
-    if not module_path.exists():
+    candidates = [
+        Path(__file__).resolve().parent / "training" / "src" / "predict.py",
+        Path(__file__).resolve().parent / "components" / "training" / "src" / "predict.py",
+        Path("/app/training/src/predict.py"),
+        Path("/app/components/training/src/predict.py"),
+    ]
+    module_path = next((candidate for candidate in candidates if candidate.exists()), None)
+    if module_path is None:
         return None
 
     spec = importlib.util.spec_from_file_location("training_predict", module_path)
@@ -121,43 +153,54 @@ def health() -> Dict[str, Any]:
 
 @app.post("/predict")
 def predict(request: PredictRequest) -> Dict[str, Any]:
-    sentences = split_sentences(request.ocr_text)
-    candidate_sentences = [
-        sentence
-        for sentence in sentences
-        if DATE_RE.search(sentence) or any(keyword in sentence.lower() for values in EVENT_KEYWORDS.values() for keyword in values)
-    ]
+    start = perf_counter()
+    try:
+        sentences = split_sentences(request.ocr_text)
+        candidate_sentences = [
+            sentence
+            for sentence in sentences
+            if DATE_RE.search(sentence) or any(keyword in sentence.lower() for values in EVENT_KEYWORDS.values() for keyword in values)
+        ]
 
-    if not candidate_sentences:
-        return {
-            "contract_id": request.document_id,
-            "has_deadline": False,
-            "uncertain": False,
-            "events": [],
-            "mode": "empty",
-        }
-
-    predict_module = load_predict_module()
-    if predict_module is not None and model_paths_available():
-        try:
-            result = predict_module.predict(
-                sentences=candidate_sentences,
-                clf_model_path=os.environ["CLF_MODEL_PATH"],
-                ner_model_path=os.environ["NER_MODEL_PATH"],
-                contract_id=request.document_id,
-                confidence_threshold=float(os.getenv("CONFIDENCE_THRESHOLD", "0.7")),
-            )
-            result["mode"] = "model"
-            result["candidate_sentences"] = len(candidate_sentences)
+        if not candidate_sentences:
+            result = {
+                "contract_id": request.document_id,
+                "has_deadline": False,
+                "uncertain": False,
+                "events": [],
+                "mode": "empty",
+            }
+            PREDICTION_REQUESTS.labels(mode="empty").inc()
             return result
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Model inference failed: {exc}") from exc
 
-    result = fallback_predict(request.document_id, candidate_sentences)
-    result["candidate_sentences"] = len(candidate_sentences)
-    result["document_type"] = request.document_type
-    result["filename"] = request.filename
-    return result
+        predict_module = load_predict_module()
+        if predict_module is not None and model_paths_available():
+            try:
+                result = predict_module.predict(
+                    sentences=candidate_sentences,
+                    clf_model_path=os.environ["CLF_MODEL_PATH"],
+                    ner_model_path=os.environ["NER_MODEL_PATH"],
+                    contract_id=request.document_id,
+                    confidence_threshold=float(os.getenv("CONFIDENCE_THRESHOLD", "0.7")),
+                )
+                result["mode"] = "model"
+                result["candidate_sentences"] = len(candidate_sentences)
+                PREDICTION_REQUESTS.labels(mode="model").inc()
+                PREDICTION_EVENTS.labels(mode="model").inc(len(result.get("events", [])))
+                return result
+            except Exception as exc:
+                PREDICTION_FAILURES.inc()
+                raise HTTPException(status_code=500, detail=f"Model inference failed: {exc}") from exc
+
+        result = fallback_predict(request.document_id, candidate_sentences)
+        result["candidate_sentences"] = len(candidate_sentences)
+        result["document_type"] = request.document_type
+        result["filename"] = request.filename
+        PREDICTION_REQUESTS.labels(mode="fallback").inc()
+        PREDICTION_EVENTS.labels(mode="fallback").inc(len(result.get("events", [])))
+        return result
+    finally:
+        PREDICTION_LATENCY.observe(perf_counter() - start)
 
 
 @app.get("/config")
@@ -173,3 +216,8 @@ def config() -> Dict[str, Any]:
 def dry_run(request: PredictRequest) -> Dict[str, Any]:
     result = predict(request)
     return {"request": json.loads(request.model_dump_json()), "result": result}
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

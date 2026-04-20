@@ -3,6 +3,10 @@ kind: Service
 metadata:
   name: online-features
   namespace: ml
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8000"
+    prometheus.io/path: /metrics
 spec:
   selector:
     app: online-features
