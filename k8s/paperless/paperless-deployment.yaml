@@ -73,7 +73,7 @@ spec:
             - name: DEADLINE_RESULTS_DIR
               value: /usr/src/paperless/data/deadline-results
             - name: INFERENCE_TIMEOUT_SECONDS
-              value: "45"
+              value: "90"
             - name: PAPERLESS_URL
               value: http://129.114.27.190
           volumeMounts:
