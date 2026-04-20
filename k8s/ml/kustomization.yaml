@@ -1,6 +1,7 @@
 resources:
   - namespace.yaml
   - model-storage-pvc.yaml
+  - data-generator-deployment.yaml
   - online-features-deployment.yaml
   - online-features-service.yaml
   - inference-deployment.yaml

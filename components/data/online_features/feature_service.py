@@ -3,6 +3,7 @@ import os
 import re
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 import redis
 from fastapi import FastAPI
@@ -57,6 +58,22 @@ class IngestRequest(BaseModel):
     document_type: str = 'unknown'
     filename: str = 'document.pdf'
 
+
+class FeedbackRequest(BaseModel):
+    event: str
+    document_id: str
+    event_type: str = 'none'
+    confidence: float = 0.0
+    timestamp: str | None = None
+    notes: str | None = None
+
+
+def append_jsonl(path_str: str, payload: dict):
+    path = Path(path_str)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a', encoding='utf-8') as handle:
+        handle.write(json.dumps(payload) + '\n')
+
 def detect_section(s):
     for k, v in SECTIONS.items():
         if k in s.lower(): return v
@@ -100,6 +117,19 @@ def ingest(req: IngestRequest):
 
         candidates = [f for f in features if f['has_date_candidate']]
         INGEST_CANDIDATES.inc(len(candidates))
+        append_jsonl(
+            os.getenv('PRODUCTION_DATA_LOG_PATH', '/data/production_ingest.jsonl'),
+            {
+                'event': 'upload',
+                'document_id': doc_id,
+                'document_type': req.document_type,
+                'filename': req.filename,
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'sentence_count': len(features),
+                'candidate_count': len(candidates),
+                'features': candidates,
+            },
+        )
         return {
             'document_id': doc_id, 'sentences': len(features),
             'candidates': len(candidates), 'features': candidates,
@@ -120,6 +150,14 @@ def health():
         ok = False
         REDIS_ERRORS.inc()
     return {'status': 'ok', 'redis': ok}
+
+
+@app.post('/feedback')
+def feedback(req: FeedbackRequest):
+    payload = req.model_dump()
+    payload['timestamp'] = payload['timestamp'] or datetime.utcnow().isoformat() + 'Z'
+    append_jsonl(os.getenv('FEEDBACK_LOG_PATH', '/data/feedback_events.jsonl'), payload)
+    return {'status': 'recorded', 'document_id': req.document_id}
 
 
 @app.get('/metrics')

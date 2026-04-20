@@ -17,6 +17,21 @@ def load_feedback_metrics() -> Dict[str, Any]:
     if metrics_path.exists():
         return json.loads(metrics_path.read_text())
 
+    feedback_log_path = Path(os.getenv("FEEDBACK_LOG_PATH", "/data/feedback_events.jsonl"))
+    if feedback_log_path.exists():
+        lines = [json.loads(line) for line in feedback_log_path.read_text().splitlines() if line.strip()]
+        feedback_events = len(lines)
+        correction_events = sum(
+            1
+            for line in lines
+            if line.get("event") in {"dismiss", "edit", "manual_add"}
+        )
+        correction_rate = (correction_events / feedback_events) if feedback_events else 0.0
+        return {
+            "new_feedback_events": feedback_events,
+            "correction_rate_7d": correction_rate,
+        }
+
     return {
         "new_feedback_events": int(os.getenv("NEW_FEEDBACK_EVENTS", "0")),
         "correction_rate_7d": float(os.getenv("CORRECTION_RATE_7D", "0.0")),
