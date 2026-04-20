@@ -86,7 +86,7 @@ def call_inference(document_id: int, content: str, document_type: str | None, fi
         headers={"Content-Type": "application/json", "Accept": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(request, timeout=float(os.getenv("INFERENCE_TIMEOUT_SECONDS", "20"))) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -129,15 +129,21 @@ def record_feedback_events(document_id: int, result: Dict[str, Any]) -> None:
     confidence = max((event.get("confidence", 0.0) for event in result.get("events", [])), default=0.0)
     event_types = sorted({event.get("event_type", "none") for event in result.get("events", [])}) or ["none"]
     for event_type in event_types:
-        post_feedback(
-            {
-                "event": event_name,
-                "document_id": str(document_id),
-                "event_type": event_type,
-                "confidence": confidence,
-                "notes": f"paperless_hook:{result.get('mode', 'unknown')}",
-            }
-        )
+        try:
+            post_feedback(
+                {
+                    "event": event_name,
+                    "document_id": str(document_id),
+                    "event_type": event_type,
+                    "confidence": confidence,
+                    "notes": f"paperless_hook:{result.get('mode', 'unknown')}",
+                }
+            )
+        except Exception as exc:
+            print(
+                f"Feedback capture failed for document {document_id} ({event_type}): {exc}",
+                file=sys.stderr,
+            )
 
 
 def main() -> int:
@@ -149,14 +155,21 @@ def main() -> int:
             print(f"No OCR content available for document {document_id}; skipping inference.")
             return 0
 
-        result = call_inference(
-            document_id=document_id,
-            content=content,
-            document_type=document.get("document_type"),
-            filename=document.get("original_file_name") or document.get("archived_file_name"),
-        )
-        persist_result(document_id, result)
-        record_feedback_events(document_id, result)
+        try:
+            result = call_inference(
+                document_id=document_id,
+                content=content,
+                document_type=document.get("document_type"),
+                filename=document.get("original_file_name") or document.get("archived_file_name"),
+            )
+            persist_result(document_id, result)
+            record_feedback_events(document_id, result)
+        except Exception as exc:
+            print(
+                f"Skipping deadline inference for document {document_id} after non-fatal error: {exc}",
+                file=sys.stderr,
+            )
+            return 0
 
         tag_names = build_tags(result)
         if tag_names:
