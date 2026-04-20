@@ -29,7 +29,7 @@ spec:
             - name: ONLINE_FEATURES_URL
               value: http://online-features.ml.svc.cluster.local:8000/ingest
             - name: PREDICTION_LOG_PATH
-              value: /data/inference_predictions.jsonl
+              value: /models/inference_predictions.jsonl
           resources:
             requests:
               cpu: "500m"
@@ -40,8 +40,6 @@ spec:
           volumeMounts:
             - name: model-storage
               mountPath: /models
-            - name: prediction-storage
-              mountPath: /data
           readinessProbe:
             httpGet:
               path: /health
@@ -56,8 +54,5 @@ spec:
             periodSeconds: 30
       volumes:
         - name: model-storage
-          persistentVolumeClaim:
-            claimName: model-storage-pvc
-        - name: prediction-storage
           persistentVolumeClaim:
             claimName: model-storage-pvc
