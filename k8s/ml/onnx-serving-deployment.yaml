@@ -33,7 +33,7 @@ spec:
             - name: ONNX_CONFIDENCE_THRESHOLD
               value: "0.7"
             - name: FEEDBACK_LOG_PATH
-              value: /data/serving_feedback.jsonl
+              value: /models/serving_feedback.jsonl
           resources:
             requests:
               cpu: "250m"
@@ -44,8 +44,6 @@ spec:
           volumeMounts:
             - name: model-storage
               mountPath: /models
-            - name: feedback-storage
-              mountPath: /data
           readinessProbe:
             httpGet:
               path: /health
@@ -60,8 +58,5 @@ spec:
             periodSeconds: 20
       volumes:
         - name: model-storage
-          persistentVolumeClaim:
-            claimName: model-storage-pvc
-        - name: feedback-storage
           persistentVolumeClaim:
             claimName: model-storage-pvc
