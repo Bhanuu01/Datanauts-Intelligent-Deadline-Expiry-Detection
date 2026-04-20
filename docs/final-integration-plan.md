@@ -9,6 +9,10 @@ This branch turns the project from role-separated milestone work into a single d
 - `components/inference_service`: internal API that wraps the training inference flow and provides a fallback mode when model artifacts are not mounted yet
 - `components/platform_automation`: platform-owned automation scripts for retrain checks and promotion gates
 - `k8s/ml`: Kubernetes manifests for the ML namespace, model storage, online features, inference, and scheduled automation jobs
+- `k8s/monitoring`: Prometheus, Grafana, kube-state-metrics, scrape config, and basic alert rules
+- `components/paperless_hooks`: Paperless post-consume integration that calls the inference service and tags processed documents
+- `scripts/chameleon-health-check.sh`: one-command cluster health snapshot for demos and recovery
+- `scripts/rebuild-k3s-images.sh`: rebuild/import helper for locally managed images inside the single-node k3s cluster
 
 ## Intended deployment flow
 
@@ -19,11 +23,17 @@ This branch turns the project from role-separated milestone work into a single d
 5. `retrain-pipeline` evaluates thresholds and launches the training scripts on schedule.
 6. Data quality and drift jobs run on their own cadence.
 
-## Immediate next steps
+## Current integrated state
 
-1. Build and publish container images referenced in `k8s/ml/*.yaml`.
-2. Mount trained model artifacts into `model-storage-pvc`.
-3. Add the serving teammate's final API or route Paperless directly to `deadline-inference`.
-4. Patch Paperless upload flow so the complementary ML feature is exercised in the normal user path.
-5. Add Prometheus/Grafana manifests and alert rules for queue depth, pod health, and inference failures.
-6. Expose `/metrics` from the ML-facing services so operational and model-serving metrics can be scraped directly in production.
+1. Paperless, Postgres, Redis, MinIO, and MLflow are deployed in Kubernetes on Chameleon.
+2. Paperless document ingestion triggers a post-consume hook that calls `deadline-inference`.
+3. `online-features` and `deadline-inference` expose `/metrics` and are scraped by Prometheus.
+4. Retrain, promotion, drift-monitor, and data-quality jobs are defined as Kubernetes CronJobs.
+5. Model artifacts and monitoring inputs are stored on shared persistent volume storage.
+
+## Remaining polish
+
+1. Capture a demo-ready Grafana dashboard view for inference latency, request volume, and pod health.
+2. Rehearse the end-to-end upload flow on 2-3 representative documents for the final presentation.
+3. Align the promotion and rollback story with the training and serving teammates' final thresholds.
+4. Keep the custom k3s images fresh on the node with `scripts/rebuild-k3s-images.sh` if the cluster is restarted.
