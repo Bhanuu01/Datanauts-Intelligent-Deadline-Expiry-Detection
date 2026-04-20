@@ -7,6 +7,9 @@ resources:
   - inference-deployment.yaml
   - inference-service.yaml
   - inference-hpa.yaml
+  - onnx-serving-deployment.yaml
+  - onnx-serving-service.yaml
+  - onnx-serving-hpa.yaml
   - retrain-pipeline-cronjob.yaml
   - model-promotion-cronjob.yaml
   - data-quality-cronjob.yaml
