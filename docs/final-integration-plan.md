@@ -8,6 +8,7 @@ This branch turns the project from role-separated milestone work into a single d
 - `components/training`: imported from `origin/training/phase2-submission`
 - `components/inference_service`: internal API that wraps the training inference flow and provides a fallback mode when model artifacts are not mounted yet
 - `components/platform_automation`: platform-owned automation scripts for retrain checks and promotion gates
+- `components/serving`: serving teammate's quantized ONNX path, adapted to shared model storage and feedback logging
 - `k8s/ml`: Kubernetes manifests for the ML namespace, model storage, online features, inference, and scheduled automation jobs
 - `k8s/monitoring`: Prometheus, Grafana, kube-state-metrics, scrape config, and basic alert rules
 - `components/paperless_hooks`: Paperless post-consume integration that calls the inference service and tags processed documents
@@ -22,6 +23,7 @@ This branch turns the project from role-separated milestone work into a single d
 4. Feedback metrics are written to shared storage.
 5. `retrain-pipeline` evaluates thresholds and launches the training scripts on schedule.
 6. Data quality and drift jobs run on their own cadence.
+7. An optional ONNX quantized serving path can be deployed as an optimized or canary serving variant.
 
 ## Current integrated state
 
@@ -55,6 +57,10 @@ This branch turns the project from role-separated milestone work into a single d
   - `/tmp/deadline-clf-roberta_clf_v5`
 - Current evaluation command
   - `python src/evaluate.py --clf_model <path> --ner_model <path> --threshold 0.7`
+- Serving-owned optimization path
+  - `components/serving/app_onnx_quant.py`
+  - optional K8s manifests: `k8s/ml/onnx-serving-deployment.yaml`, `k8s/ml/onnx-serving-service.yaml`
+  - expected model location: `/models/onnx_quantized_model`
 
 ## Remaining polish
 

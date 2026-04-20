@@ -8,6 +8,7 @@ declare -A IMAGE_TO_DOCKERFILE=(
   ["ghcr.io/bhanuu01/datanauts-data-monitoring:latest"]="components/data/evaluation_monitoring/Dockerfile"
   ["ghcr.io/bhanuu01/datanauts-platform-automation:latest"]="components/platform_automation/Dockerfile"
   ["ghcr.io/bhanuu01/datanauts-inference-runtime:latest"]="components/inference_service/Dockerfile.runtime"
+  ["ghcr.io/bhanuu01/datanauts-onnx-serving:latest"]="components/serving/Dockerfile.onnx_quant"
 )
 
 build_and_import() {

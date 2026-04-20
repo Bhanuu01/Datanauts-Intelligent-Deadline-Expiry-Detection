@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deadline-onnx-serving
+  namespace: ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deadline-onnx-serving
+  template:
+    metadata:
+      labels:
+        app: deadline-onnx-serving
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8004"
+    spec:
+      containers:
+        - name: deadline-onnx-serving
+          image: ghcr.io/bhanuu01/datanauts-onnx-serving:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8004
+          env:
+            - name: ONNX_MODEL_PATH
+              value: /models/onnx_quantized_model
+            - name: FEEDBACK_LOG_PATH
+              value: /data/serving_feedback.jsonl
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          volumeMounts:
+            - name: model-storage
+              mountPath: /models
+            - name: feedback-storage
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 30
+            periodSeconds: 20
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: model-storage-pvc
+        - name: feedback-storage
+          persistentVolumeClaim:
+            claimName: model-storage-pvc
