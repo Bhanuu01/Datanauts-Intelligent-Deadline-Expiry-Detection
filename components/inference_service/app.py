@@ -2,6 +2,8 @@ import importlib.util
 import json
 import os
 import re
+import urllib.error
+import urllib.request
 from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
@@ -67,6 +69,13 @@ PREDICTION_LATENCY = Histogram(
     "Latency of prediction requests handled by the deadline inference service.",
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
 )
+
+
+def append_jsonl(path_str: str, payload: Dict[str, Any]) -> None:
+    path = Path(path_str)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload) + "\n")
 
 
 def split_sentences(text: str) -> List[str]:
@@ -144,6 +153,36 @@ def model_paths_available() -> bool:
     return bool(clf_model and ner_model and Path(clf_model).exists() and Path(ner_model).exists())
 
 
+def candidate_sentences_from_online_features(request: PredictRequest) -> Optional[List[str]]:
+    service_url = os.getenv("ONLINE_FEATURES_URL", "").strip()
+    if not service_url:
+        return None
+
+    payload = {
+        "document_id": request.document_id,
+        "ocr_text": request.ocr_text,
+        "document_type": request.document_type,
+        "filename": request.filename,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    service_request = urllib.request.Request(
+        service_url,
+        data=data,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(service_request, timeout=15) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+
+    features = body.get("features", [])
+    candidates = [feature.get("sentence", "").strip() for feature in features if feature.get("has_date_candidate")]
+    return [candidate for candidate in candidates if candidate]
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {
@@ -158,12 +197,15 @@ def health() -> Dict[str, Any]:
 def predict(request: PredictRequest) -> Dict[str, Any]:
     start = perf_counter()
     try:
-        sentences = split_sentences(request.ocr_text)
-        candidate_sentences = [
-            sentence
-            for sentence in sentences
-            if DATE_RE.search(sentence) or any(keyword in sentence.lower() for values in EVENT_KEYWORDS.values() for keyword in values)
-        ]
+        candidate_sentences = candidate_sentences_from_online_features(request)
+        if candidate_sentences is None:
+            sentences = split_sentences(request.ocr_text)
+            candidate_sentences = [
+                sentence
+                for sentence in sentences
+                if DATE_RE.search(sentence)
+                or any(keyword in sentence.lower() for values in EVENT_KEYWORDS.values() for keyword in values)
+            ]
 
         if not candidate_sentences:
             result = {
@@ -175,6 +217,19 @@ def predict(request: PredictRequest) -> Dict[str, Any]:
                 "release_channel": RELEASE_CHANNEL,
             }
             PREDICTION_REQUESTS.labels(mode="empty").inc()
+            append_jsonl(
+                os.getenv("PREDICTION_LOG_PATH", "/data/inference_predictions.jsonl"),
+                {
+                    "document_id": request.document_id,
+                    "document_type": request.document_type,
+                    "filename": request.filename,
+                    "has_deadline": False,
+                    "uncertain": False,
+                    "event_count": 0,
+                    "mode": "empty",
+                    "release_channel": RELEASE_CHANNEL,
+                },
+            )
             return result
 
         predict_module = load_predict_module()
@@ -192,6 +247,20 @@ def predict(request: PredictRequest) -> Dict[str, Any]:
                 result["release_channel"] = RELEASE_CHANNEL
                 PREDICTION_REQUESTS.labels(mode="model").inc()
                 PREDICTION_EVENTS.labels(mode="model").inc(len(result.get("events", [])))
+                append_jsonl(
+                    os.getenv("PREDICTION_LOG_PATH", "/data/inference_predictions.jsonl"),
+                    {
+                        "document_id": request.document_id,
+                        "document_type": request.document_type,
+                        "filename": request.filename,
+                        "has_deadline": result.get("has_deadline", False),
+                        "uncertain": result.get("uncertain", False),
+                        "event_count": len(result.get("events", [])),
+                        "mode": "model",
+                        "release_channel": RELEASE_CHANNEL,
+                        "events": [event.get("event_type", "unknown") for event in result.get("events", [])],
+                    },
+                )
                 return result
             except Exception as exc:
                 PREDICTION_FAILURES.inc()
@@ -204,6 +273,20 @@ def predict(request: PredictRequest) -> Dict[str, Any]:
         result["release_channel"] = RELEASE_CHANNEL
         PREDICTION_REQUESTS.labels(mode="fallback").inc()
         PREDICTION_EVENTS.labels(mode="fallback").inc(len(result.get("events", [])))
+        append_jsonl(
+            os.getenv("PREDICTION_LOG_PATH", "/data/inference_predictions.jsonl"),
+            {
+                "document_id": request.document_id,
+                "document_type": request.document_type,
+                "filename": request.filename,
+                "has_deadline": result.get("has_deadline", False),
+                "uncertain": result.get("uncertain", False),
+                "event_count": len(result.get("events", [])),
+                "mode": "fallback",
+                "release_channel": RELEASE_CHANNEL,
+                "events": [event.get("event_type", "unknown") for event in result.get("events", [])],
+            },
+        )
         return result
     finally:
         PREDICTION_LATENCY.observe(perf_counter() - start)

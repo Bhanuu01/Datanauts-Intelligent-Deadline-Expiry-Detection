@@ -20,9 +20,9 @@ This branch turns the project from role-separated milestone work into a single d
 ## Intended deployment flow
 
 1. Paperless ingests OCR text.
-2. `online-features` prepares candidate deadline sentences.
-3. `deadline-inference` runs model inference or a fallback extraction path.
-4. Feedback metrics are written to shared storage.
+2. `online-features` prepares candidate deadline sentences and writes production ingest records to shared storage.
+3. `deadline-inference` runs model inference or a fallback extraction path and persists prediction summaries on the same shared volume.
+4. The Paperless post-consume hook writes feedback events to the shared `online-features` feedback endpoint; the synthetic generator writes the same event format to emulate user confirmations/edits/dismissals.
 5. `retrain-pipeline` evaluates thresholds and launches the training scripts on schedule.
 6. Data quality and drift jobs run on their own cadence.
 7. An optional ONNX quantized serving path can be deployed as an optimized or canary serving variant.
@@ -36,7 +36,7 @@ This branch turns the project from role-separated milestone work into a single d
 3. `online-features` and `deadline-inference` expose `/metrics` and are scraped by Prometheus.
 4. Retrain, promotion, drift-monitor, and data-quality jobs are defined as Kubernetes CronJobs.
 5. Staging, canary, and production inference deployments are defined in `k8s/release` and expose release-aware `/health` responses.
-6. Model artifacts and monitoring inputs are stored on shared persistent volume storage.
+6. Model artifacts, production-ingest logs, prediction summaries, and feedback events are stored on shared persistent volume storage.
 7. Prometheus alerts cover service outages, pod health, image pull failures, inference failures, latency, and node disk pressure.
 
 ## Team-owned production contracts
@@ -81,4 +81,5 @@ This branch turns the project from role-separated milestone work into a single d
 2. Release automation now supports `promote` and `rollback` actions and can patch the canonical inference service selector inside Kubernetes.
 3. Alerting covers the main failure mode encountered during integration: node `DiskPressure` leading to evicted pods and image-pull failures.
 4. The rebuild/import helper now prunes Docker artifacts after import so repeated image refreshes do not consume the node's local disk indefinitely.
-5. Final demo prep should focus on healthy pod state, one live Paperless upload, Prometheus/Grafana views, and the release-promotion JSON plus service-selector story.
+5. Paperless now exercises the same `online-features -> inference -> feedback-log` path used by scheduled retraining and the synthetic data generator.
+6. Final demo prep should focus on healthy pod state, one live Paperless upload, Prometheus/Grafana views, shared JSONL logs on the PVC, and the release-promotion JSON plus service-selector story.

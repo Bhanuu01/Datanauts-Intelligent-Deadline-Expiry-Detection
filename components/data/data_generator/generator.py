@@ -7,7 +7,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 fake = Faker()
 
-SERVICE_URL = os.getenv('SERVICE_URL', 'http://feature-service:8000')
+SERVICE_URL = os.getenv('SERVICE_URL', 'http://online-features:8000')
 RATE = int(os.getenv('REQUESTS_PER_MINUTE', '10'))
 SLEEP = 60.0 / RATE
 
@@ -59,18 +59,10 @@ def gen_upload():
     template = random.choice(TEMPLATES[event_type])
     sentence = template.format(d=d) if '{d}' in template else template
     return {
-        'event': 'upload',
         'document_id': fake.uuid4(),
         'filename': f'{fake.company().replace(" ","_")}_{d}.pdf',
         'document_type': dt,
-        'sentence': sentence,
-        'event_type': event_type,
-        'document_metadata': {
-            'document_type': dt,
-            'section_header': random.choice(['Term','Renewal','Effective Date','Agreement Date','Notice']),
-            'upload_timestamp': datetime.utcnow().isoformat()+'Z'
-        },
-        'timestamp': datetime.utcnow().isoformat()
+        'ocr_text': sentence,
     }
 
 def gen_feedback(doc_id):
