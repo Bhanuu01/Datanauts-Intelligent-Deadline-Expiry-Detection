@@ -75,7 +75,7 @@ fi
 
 log "========================================================"
 log "All runs complete. Summary: $SUMMARY"
-log "MLflow UI: http://129.114.27.190:8000"
+log "MLflow UI: http://129.114.27.190:30500"
 log ""
 log "Next steps:"
 log "  Feedback:  python src/feedback_loop.py --status"

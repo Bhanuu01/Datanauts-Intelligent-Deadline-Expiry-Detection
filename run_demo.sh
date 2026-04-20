@@ -42,5 +42,5 @@ python "$ROOT/src/train_classifier.py" --model roberta_clf_v1
 echo ""
 echo "=================================================="
 echo " Demo complete! Results logged to MLflow:"
-echo " http://129.114.27.190:8000"
+echo " http://129.114.27.190:30500"
 echo "=================================================="
