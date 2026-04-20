@@ -7,7 +7,7 @@ Modes:
   --status    Print queue size and distance to retrain trigger.
 """
 import os, json, argparse, subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 
 QUEUE_FILE           = "./data/uncertain_samples.jsonl"
 CONFIDENCE_THRESHOLD = 0.7
@@ -140,7 +140,7 @@ def retrain(clf_model, next_version, queue_file):
     )
     if result.returncode == 0:
         print(f"[feedback] Retrain completed successfully.")
-        archive_path = queue_file.replace(".jsonl", f"_archived_{datetime.utcnow():%Y%m%d}.jsonl")
+        archive_path = queue_file.replace(".jsonl", f"_archived_{datetime.now(timezone.utc):%Y%m%d}.jsonl")
         os.rename(queue_file, archive_path)
         print(f"[feedback] Queue archived to {archive_path}")
     else:
