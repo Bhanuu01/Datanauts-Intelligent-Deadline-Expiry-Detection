@@ -1,9 +1,0 @@
-FROM python:3.11-slim
-WORKDIR /app
-RUN pip install --no-cache-dir torch --extra-index-url https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir "ray[serve]" fastapi uvicorn transformers optimum[onnxruntime]
-COPY onnx_model/ ./onnx_model/
-COPY app_ray.py .
-
-# NEW: Run the script directly using python3
-CMD ["python3", "app_ray.py"]
