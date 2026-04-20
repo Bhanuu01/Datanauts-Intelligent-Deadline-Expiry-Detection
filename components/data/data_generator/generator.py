@@ -12,31 +12,62 @@ RATE = int(os.getenv('REQUESTS_PER_MINUTE', '10'))
 SLEEP = 60.0 / RATE
 
 DOC_TYPES = ['contract','lease','insurance','service_agreement']
-EVENT_TYPES = ['expiration','effective','renewal','none']
-TEMPLATES = [
-    'This Agreement shall expire on {d}.',
-    'Contract terminates on {d} unless renewed.',
-    'The initial term ends {d} after Effective Date.',
-    'Agreement effective as of {d}.',
-    'Renewal notice required 30 days before {d}.',
-]
+
+# Match the current classifier label space used by training/serving.
+EVENT_TYPES = ['none', 'expiration', 'effective', 'renewal', 'agreement', 'notice_period']
+
+TEMPLATES = {
+    'expiration': [
+        'This Agreement shall expire on {d}, unless terminated earlier by either party.',
+        'The contract terminates on {d} unless renewed by written agreement.',
+        'The software license granted hereunder shall terminate on {d} unless renewed.',
+    ],
+    'effective': [
+        'This Agreement is effective as of {d} upon execution by both parties.',
+        'The tenancy shall commence on {d} and the tenant agrees to all terms herein.',
+        'Agreement effective as of {d}.',
+    ],
+    'renewal': [
+        'The Agreement shall automatically renew for successive one-year terms unless either party provides written notice.',
+        'This policy automatically renews annually on the anniversary date unless the insured provides 60 days written notice.',
+        'Renewal notice required 30 days before {d}.',
+    ],
+    'agreement': [
+        'This Agreement is entered into as of {d}, by and between the parties listed herein.',
+        'This offer of employment is made as of {d} and is contingent upon successful background check completion.',
+        'The Agreement is dated {d} and shall govern the relationship between the parties.',
+    ],
+    'notice_period': [
+        'Either party may terminate this Agreement upon sixty (60) days prior written notice to the other party.',
+        'To prevent automatic renewal, written cancellation notice must be received no later than 30 days prior to the renewal date.',
+        'Written notice of termination must be delivered no later than {d}.',
+    ],
+    'none': [
+        'Each party agrees to keep confidential all proprietary information disclosed under this Agreement.',
+        'All goods must be delivered in accordance with the specifications outlined in Exhibit A.',
+        'The employee agrees to maintain confidentiality of all proprietary information acquired during employment.',
+    ],
+}
 
 def make_date():
     return (datetime.now() + timedelta(days=random.randint(30,730))).strftime('%B %d, %Y')
 
 def gen_upload():
     dt = random.choice(DOC_TYPES)
+    event_type = random.choice(EVENT_TYPES)
     d = make_date()
-    sentence = random.choice(TEMPLATES).format(d=d)
+    template = random.choice(TEMPLATES[event_type])
+    sentence = template.format(d=d) if '{d}' in template else template
     return {
         'event': 'upload',
         'document_id': fake.uuid4(),
         'filename': f'{fake.company().replace(" ","_")}_{d}.pdf',
         'document_type': dt,
         'sentence': sentence,
+        'event_type': event_type,
         'document_metadata': {
             'document_type': dt,
-            'section_header': random.choice(['Term','Renewal','Effective Date']),
+            'section_header': random.choice(['Term','Renewal','Effective Date','Agreement Date','Notice']),
             'upload_timestamp': datetime.utcnow().isoformat()+'Z'
         },
         'timestamp': datetime.utcnow().isoformat()
