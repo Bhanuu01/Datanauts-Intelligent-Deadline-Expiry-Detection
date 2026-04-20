@@ -18,6 +18,8 @@ spec:
               env:
                 - name: EVALUATION_METRICS_PATH
                   value: /data/evaluation_metrics.json
+                - name: SERVING_METRICS_PATH
+                  value: /data/serving_metrics.json
                 - name: PROMOTION_DECISION_PATH
                   value: /data/promotion_decision.json
                 - name: MIN_NER_F1
@@ -30,6 +32,12 @@ spec:
                   value: "10"
                 - name: MAX_LATENCY_P95_MS
                   value: "500"
+                - name: MAX_LIVE_ERROR_RATE
+                  value: "0.05"
+                - name: MAX_LIVE_LATENCY_P95_MS
+                  value: "500"
+                - name: MAX_LIVE_CORRECTION_RATE_7D
+                  value: "0.15"
               resources:
                 requests:
                   cpu: "250m"

@@ -6,15 +6,15 @@ import mlflow
 
 from predict import predict
 
-MLFLOW_URI  = os.getenv("MLFLOW_TRACKING_URI", "http://129.114.27.190:8000")
+MLFLOW_URI  = os.getenv("MLFLOW_TRACKING_URI", "http://129.114.27.190:30500")
 EXPERIMENT  = "deadline-detection-e2e"
 DATASET_ID  = "tanvitakavane/datanauts_project_cuad-deadline-ner-version2"
 DATA_PATH   = "./data/deadline_sentences"
 DATE_WINDOW = 30   # days — "within N days" match
 
-os.environ["AWS_ACCESS_KEY_ID"]      = "datanauts-key"
-os.environ["AWS_SECRET_ACCESS_KEY"]  = "datanauts-secret"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://129.114.27.190:9000"
+os.environ["AWS_ACCESS_KEY_ID"]      = os.getenv("AWS_ACCESS_KEY_ID", "datanauts-key")
+os.environ["AWS_SECRET_ACCESS_KEY"]  = os.getenv("AWS_SECRET_ACCESS_KEY", "datanauts-secret")
+os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv("MLFLOW_S3_ENDPOINT_URL", "http://129.114.27.190:30900")
 
 
 def dates_within(pred_date, gt_date, window=DATE_WINDOW):
@@ -26,7 +26,7 @@ def dates_within(pred_date, gt_date, window=DATE_WINDOW):
         return False
 
 
-def run_evaluation(clf_model_path, ner_model_path, threshold=0.7):
+def run_evaluation(clf_model_path, ner_model_path, threshold=0.7, candidate_latency_p95_ms=0.0):
     dd_disk  = load_from_disk(DATA_PATH)
     raw_hf   = load_dataset(DATASET_ID)
 
@@ -162,7 +162,24 @@ def run_evaluation(clf_model_path, ner_model_path, threshold=0.7):
             })
         print(f"E2E metrics logged → {MLFLOW_URI} | experiment: {EXPERIMENT}")
 
-    return stats, dict(per_type)
+    summary = {
+        "ner_f1": 0.0,
+        "clf_macro_f1": 0.0,
+        "e2e_coverage": stats["covered"] / n_gt,
+        "false_alarm_count": stats["false_alarm"],
+        "candidate_latency_p95_ms": candidate_latency_p95_ms,
+        "max_latency_p95_ms": float(os.getenv("MAX_LATENCY_P95_MS", "500")),
+        "coverage_pct": 100 * stats["covered"] / n_gt,
+        "exact_match_pct": 100 * stats["exact_match"] / n_gt,
+        "within_30_days_pct": 100 * stats["within_30_days"] / n_gt,
+        "true_none_count": stats["true_none"],
+        "uncertain_flagged": stats["uncertain_flagged"],
+        "multi_date_conflict": stats["multi_date_conflict"],
+        "total_test_contracts": stats["total"],
+        "per_type": dict(per_type),
+    }
+
+    return stats, dict(per_type), summary
 
 
 def run_cross_domain_evaluation(samples_path, clf_model_path, ner_model_path, threshold=0.7):
@@ -224,15 +241,28 @@ def main():
     parser.add_argument("--clf_model", required=True)
     parser.add_argument("--ner_model", required=True)
     parser.add_argument("--threshold", type=float, default=0.7)
+    parser.add_argument("--candidate_latency_p95_ms", type=float, default=0.0)
+    parser.add_argument("--output_json", default=None)
     parser.add_argument("--cross_domain_samples", default=None,
                         help="Optional path to cross-domain samples JSON for generalization test")
     args = parser.parse_args()
 
-    run_evaluation(args.clf_model, args.ner_model, args.threshold)
+    _, _, summary = run_evaluation(
+        args.clf_model,
+        args.ner_model,
+        args.threshold,
+        args.candidate_latency_p95_ms,
+    )
     if args.cross_domain_samples:
-        run_cross_domain_evaluation(
+        cross_domain = run_cross_domain_evaluation(
             args.cross_domain_samples, args.clf_model, args.ner_model, args.threshold
         )
+        summary["cross_domain_accuracy"] = cross_domain["accuracy"]
+        summary["cross_domain_samples"] = cross_domain["n"]
+
+    if args.output_json:
+        with open(args.output_json, "w") as f:
+            json.dump(summary, f, indent=2)
 
 
 if __name__ == "__main__":

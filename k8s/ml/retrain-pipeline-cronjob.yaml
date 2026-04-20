@@ -19,6 +19,10 @@ spec:
                   value: /data/feedback_metrics.json
                 - name: RETRAIN_DECISION_PATH
                   value: /data/retrain_decision.json
+                - name: EVALUATION_METRICS_PATH
+                  value: /data/evaluation_metrics.json
+                - name: MODEL_RELEASES_ROOT
+                  value: /data/model-releases
                 - name: MIN_FEEDBACK_EVENTS
                   value: "500"
                 - name: MAX_CORRECTION_RATE
@@ -31,6 +35,8 @@ spec:
                   value: http://mlflow.platform.svc.cluster.local:5000
                 - name: MLFLOW_S3_ENDPOINT_URL
                   value: http://minio.platform.svc.cluster.local:9000
+                - name: CROSS_DOMAIN_SAMPLES_PATH
+                  value: /app/components/training/samples/cross_domain_sample.json
                 - name: AWS_ACCESS_KEY_ID
                   value: mlflow
                 - name: AWS_SECRET_ACCESS_KEY
