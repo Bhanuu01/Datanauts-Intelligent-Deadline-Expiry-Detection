@@ -10,6 +10,7 @@ This branch turns the project from role-separated milestone work into a single d
 - `components/platform_automation`: platform-owned automation scripts for retrain checks and promotion gates
 - `components/serving`: serving teammate's quantized ONNX path, adapted to shared model storage and feedback logging
 - `k8s/ml`: Kubernetes manifests for the ML namespace, model storage, online features, inference, and scheduled automation jobs
+- `k8s/release`: staging, canary, production inference manifests plus release-promotion automation
 - `k8s/monitoring`: Prometheus, Grafana, kube-state-metrics, scrape config, and basic alert rules
 - `components/paperless_hooks`: Paperless post-consume integration that calls the inference service and tags processed documents
 - `scripts/chameleon-health-check.sh`: one-command cluster health snapshot for demos and recovery
@@ -24,6 +25,7 @@ This branch turns the project from role-separated milestone work into a single d
 5. `retrain-pipeline` evaluates thresholds and launches the training scripts on schedule.
 6. Data quality and drift jobs run on their own cadence.
 7. An optional ONNX quantized serving path can be deployed as an optimized or canary serving variant.
+8. A separate release layer can run staging, canary, and production inference deployments in parallel.
 
 ## Current integrated state
 
@@ -61,10 +63,17 @@ This branch turns the project from role-separated milestone work into a single d
   - `components/serving/app_onnx_quant.py`
   - optional K8s manifests: `k8s/ml/onnx-serving-deployment.yaml`, `k8s/ml/onnx-serving-service.yaml`
   - expected model location: `/models/onnx_quantized_model`
+- Release progression
+  - staging: `deadline-inference-staging`
+  - canary: `deadline-inference-canary`
+  - production: `deadline-inference-production`
+  - promotion planner: `components/platform_automation/promote_release.py`
+  - release manifests: `k8s/release/kustomization.yaml`
 
 ## Remaining polish
 
 1. Capture a demo-ready Grafana dashboard view for inference latency, request volume, and pod health.
 2. Rehearse the end-to-end upload flow on 2-3 representative documents for the final presentation.
-3. Align the promotion and rollback story with the training and serving teammates' final thresholds.
-4. Keep the custom k3s images fresh on the node with `scripts/rebuild-k3s-images.sh` if the cluster is restarted.
+3. Decide whether to apply the `k8s/release` layer live on Chameleon or keep it as a ready-to-apply release artifact set.
+4. Align the promotion and rollback story with the training and serving teammates' final thresholds.
+5. Keep the custom k3s images fresh on the node with `scripts/rebuild-k3s-images.sh` if the cluster is restarted.

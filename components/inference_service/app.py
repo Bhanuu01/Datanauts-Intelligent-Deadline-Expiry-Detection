@@ -46,6 +46,7 @@ class PredictRequest(BaseModel):
 
 
 app = FastAPI(title="Deadline Detection Inference Service")
+RELEASE_CHANNEL = os.getenv("RELEASE_CHANNEL", "production")
 
 PREDICTION_REQUESTS = Counter(
     "deadline_inference_requests_total",
@@ -147,6 +148,7 @@ def model_paths_available() -> bool:
 def health() -> Dict[str, Any]:
     return {
         "status": "ok",
+        "release_channel": RELEASE_CHANNEL,
         "predict_module_loaded": load_predict_module() is not None,
         "models_available": model_paths_available(),
     }
@@ -170,6 +172,7 @@ def predict(request: PredictRequest) -> Dict[str, Any]:
                 "uncertain": False,
                 "events": [],
                 "mode": "empty",
+                "release_channel": RELEASE_CHANNEL,
             }
             PREDICTION_REQUESTS.labels(mode="empty").inc()
             return result
@@ -186,6 +189,7 @@ def predict(request: PredictRequest) -> Dict[str, Any]:
                 )
                 result["mode"] = "model"
                 result["candidate_sentences"] = len(candidate_sentences)
+                result["release_channel"] = RELEASE_CHANNEL
                 PREDICTION_REQUESTS.labels(mode="model").inc()
                 PREDICTION_EVENTS.labels(mode="model").inc(len(result.get("events", [])))
                 return result
@@ -197,6 +201,7 @@ def predict(request: PredictRequest) -> Dict[str, Any]:
         result["candidate_sentences"] = len(candidate_sentences)
         result["document_type"] = request.document_type
         result["filename"] = request.filename
+        result["release_channel"] = RELEASE_CHANNEL
         PREDICTION_REQUESTS.labels(mode="fallback").inc()
         PREDICTION_EVENTS.labels(mode="fallback").inc(len(result.get("events", [])))
         return result
@@ -210,6 +215,7 @@ def config() -> Dict[str, Any]:
         "confidence_threshold": float(os.getenv("CONFIDENCE_THRESHOLD", "0.7")),
         "clf_model_path": os.getenv("CLF_MODEL_PATH", ""),
         "ner_model_path": os.getenv("NER_MODEL_PATH", ""),
+        "release_channel": RELEASE_CHANNEL,
     }
 
 

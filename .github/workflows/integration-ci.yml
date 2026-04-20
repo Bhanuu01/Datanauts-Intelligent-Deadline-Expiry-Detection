@@ -1,0 +1,42 @@
+name: Integration CI
+
+on:
+  push:
+    branches:
+      - integration/apr20
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile \
+            components/inference_service/app.py \
+            components/platform_automation/run_retrain_cycle.py \
+            components/platform_automation/evaluate_and_promote.py \
+            components/platform_automation/promote_release.py \
+            components/serving/app_onnx_quant.py \
+            components/serving/quantize_onnx.py \
+            components/serving/deployment_trigger.py \
+            components/training/src/build_dataset.py \
+            components/training/src/evaluate.py \
+            components/training/src/predict.py \
+            components/training/src/train_classifier.py \
+            components/training/src/train_ner.py
+
+      - name: Verify release manifests exist
+        run: |
+          test -f k8s/release/kustomization.yaml
+          test -f k8s/release/inference-staging-deployment.yaml
+          test -f k8s/release/inference-canary-deployment.yaml
+          test -f k8s/release/inference-production-deployment.yaml
