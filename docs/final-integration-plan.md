@@ -15,6 +15,7 @@ This branch turns the project from role-separated milestone work into a single d
 - `components/paperless_hooks`: Paperless post-consume integration that calls the inference service and tags processed documents
 - `scripts/chameleon-health-check.sh`: one-command cluster health snapshot for demos and recovery
 - `scripts/rebuild-k3s-images.sh`: rebuild/import helper for locally managed images inside the single-node k3s cluster
+- automated Docker cleanup after image import to prevent the Chameleon node from re-entering disk pressure during rebuild cycles
 
 ## Intended deployment flow
 
@@ -25,7 +26,8 @@ This branch turns the project from role-separated milestone work into a single d
 5. `retrain-pipeline` evaluates thresholds and launches the training scripts on schedule.
 6. Data quality and drift jobs run on their own cadence.
 7. An optional ONNX quantized serving path can be deployed as an optimized or canary serving variant.
-8. A separate release layer can run staging, canary, and production inference deployments in parallel.
+8. A separate release layer runs staging, canary, and production inference deployments in parallel.
+9. The release-promotion job can patch the canonical `deadline-inference` service to point at the next approved release channel.
 
 ## Current integrated state
 
@@ -33,7 +35,9 @@ This branch turns the project from role-separated milestone work into a single d
 2. Paperless document ingestion triggers a post-consume hook that calls `deadline-inference`.
 3. `online-features` and `deadline-inference` expose `/metrics` and are scraped by Prometheus.
 4. Retrain, promotion, drift-monitor, and data-quality jobs are defined as Kubernetes CronJobs.
-5. Model artifacts and monitoring inputs are stored on shared persistent volume storage.
+5. Staging, canary, and production inference deployments are defined in `k8s/release` and expose release-aware `/health` responses.
+6. Model artifacts and monitoring inputs are stored on shared persistent volume storage.
+7. Prometheus alerts cover service outages, pod health, image pull failures, inference failures, latency, and node disk pressure.
 
 ## Team-owned production contracts
 
@@ -68,12 +72,13 @@ This branch turns the project from role-separated milestone work into a single d
   - canary: `deadline-inference-canary`
   - production: `deadline-inference-production`
   - promotion planner: `components/platform_automation/promote_release.py`
+  - live service patch target: `deadline-inference`
   - release manifests: `k8s/release/kustomization.yaml`
 
-## Remaining polish
+## DevOps Completion Notes
 
-1. Capture a demo-ready Grafana dashboard view for inference latency, request volume, and pod health.
-2. Rehearse the end-to-end upload flow on 2-3 representative documents for the final presentation.
-3. Decide whether to apply the `k8s/release` layer live on Chameleon or keep it as a ready-to-apply release artifact set.
-4. Align the promotion and rollback story with the training and serving teammates' final thresholds.
-5. Keep the custom k3s images fresh on the node with `scripts/rebuild-k3s-images.sh` if the cluster is restarted.
+1. CI validation exists in `.github/workflows/integration-ci.yml` and checks the integrated services plus release manifests.
+2. Release automation now supports `promote` and `rollback` actions and can patch the canonical inference service selector inside Kubernetes.
+3. Alerting covers the main failure mode encountered during integration: node `DiskPressure` leading to evicted pods and image-pull failures.
+4. The rebuild/import helper now prunes Docker artifacts after import so repeated image refreshes do not consume the node's local disk indefinitely.
+5. Final demo prep should focus on healthy pod state, one live Paperless upload, Prometheus/Grafana views, and the release-promotion JSON plus service-selector story.
