@@ -26,6 +26,12 @@ spec:
           env:
             - name: ONNX_MODEL_PATH
               value: /models/onnx_quantized_model
+            - name: ONNX_CLF_MODEL_PATH
+              value: /models/onnx_quantized_model/onnx_quantized_clf
+            - name: ONNX_NER_MODEL_PATH
+              value: /models/onnx_quantized_model/onnx_quantized_ner
+            - name: ONNX_CONFIDENCE_THRESHOLD
+              value: "0.7"
             - name: FEEDBACK_LOG_PATH
               value: /data/serving_feedback.jsonl
           resources:

@@ -10,6 +10,8 @@ COPY components/serving/app_onnx_quant.py /app/app_onnx_quant.py
 
 ENV PYTHONUNBUFFERED=1
 ENV ONNX_MODEL_PATH=/models/onnx_quantized_model
+ENV ONNX_CLF_MODEL_PATH=/models/onnx_quantized_model/onnx_quantized_clf
+ENV ONNX_NER_MODEL_PATH=/models/onnx_quantized_model/onnx_quantized_ner
 ENV FEEDBACK_LOG_PATH=/data/serving_feedback.jsonl
 
 CMD ["uvicorn", "app_onnx_quant:app", "--host", "0.0.0.0", "--port", "8004"]
