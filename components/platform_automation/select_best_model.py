@@ -29,13 +29,13 @@ def best_run(client: MlflowClient, experiment_name: str, metric: str = METRIC_KE
 
     runs = client.search_runs(
         experiment_ids=[exp.experiment_id],
-        filter_string=f"metrics.{metric} > 0",   # exclude runs that never logged the metric
+        filter_string=f"metrics.{metric} > 0 and params.epochs != '0'",  # exclude baselines
         order_by=[f"metrics.{metric} DESC"],
         max_results=1,
     )
     if not runs:
-        # Fallback: no run logged the metric at all — take most recent
-        print(f"[WARN] No runs with metric '{metric}' in {experiment_name!r}. "
+        # Fallback: no trained run found — try any run with the metric
+        print(f"[WARN] No trained runs with metric '{metric}' in {experiment_name!r}. "
               f"Falling back to most-recent run.", file=sys.stderr)
         runs = client.search_runs(
             experiment_ids=[exp.experiment_id],
@@ -85,7 +85,7 @@ def main():
     # ── NER ──────────────────────────────────────────────────────────────────
     ner_run = best_run(client, NER_EXP, args.metric)
     ner_f1  = ner_run.data.metrics.get(args.metric, 0.0)
-    ner_model_name = ner_run.data.params.get("model", "unknown")
+    ner_model_name = ner_run.data.params.get("model_name", ner_run.data.params.get("model", "unknown"))
     print(f"[NER]  Best run  : {ner_run.info.run_id}")
     print(f"       Model name: {ner_model_name}")
     print(f"       {args.metric}: {ner_f1:.4f}")
@@ -94,7 +94,7 @@ def main():
     # ── CLF ──────────────────────────────────────────────────────────────────
     clf_run = best_run(client, CLF_EXP, args.metric)
     clf_f1  = clf_run.data.metrics.get(args.metric, 0.0)
-    clf_model_name = clf_run.data.params.get("model", "unknown")
+    clf_model_name = clf_run.data.params.get("model_name", clf_run.data.params.get("model", "unknown"))
     print(f"\n[CLF]  Best run  : {clf_run.info.run_id}")
     print(f"       Model name: {clf_model_name}")
     print(f"       {args.metric}: {clf_f1:.4f}")
