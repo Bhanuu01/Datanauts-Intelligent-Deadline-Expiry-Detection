@@ -36,11 +36,11 @@ spec:
               value: /models/serving_feedback.jsonl
           resources:
             requests:
-              cpu: "250m"
-              memory: "512Mi"
-            limits:
-              cpu: "1000m"
+              cpu: "500m"
               memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
           volumeMounts:
             - name: model-storage
               mountPath: /models

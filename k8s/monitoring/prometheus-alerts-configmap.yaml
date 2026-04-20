@@ -80,3 +80,49 @@ data:
             annotations:
               summary: Pod is stuck pulling an image
               description: One or more workload pods are stuck in ImagePullBackOff or ErrImagePull for over 5 minutes.
+
+          - alert: SharedPlatformMemoryHigh
+            expr: |
+              (
+                container_memory_working_set_bytes{namespace="platform", pod=~"mlflow.*|minio.*", container!="", image!=""}
+                /
+                on(namespace, pod, container) kube_pod_container_resource_limits{namespace="platform", resource="memory", unit="byte"}
+              ) > 0.85
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Shared platform service memory utilization is high
+              description: MLflow or MinIO has used more than 85% of its configured memory limit for 10 minutes.
+
+          - alert: MonitoringMemoryHigh
+            expr: |
+              (
+                container_memory_working_set_bytes{namespace="monitoring", pod=~"grafana.*|prometheus.*", container!="", image!=""}
+                /
+                on(namespace, pod, container) kube_pod_container_resource_limits{namespace="monitoring", resource="memory", unit="byte"}
+              ) > 0.85
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Monitoring component memory utilization is high
+              description: Grafana or Prometheus has used more than 85% of its configured memory limit for 10 minutes.
+
+          - alert: NodeMemoryPressure
+            expr: kube_node_status_condition{condition="MemoryPressure", status="true"} == 1
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: Kubernetes node is under memory pressure
+              description: The Chameleon Kubernetes node has entered MemoryPressure and workloads may degrade or be evicted.
+
+          - alert: OnnxServingDown
+            expr: up{job="kubernetes-services", kubernetes_namespace="ml", kubernetes_service_name="deadline-onnx-serving"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: ONNX serving service is down
+              description: The ONNX serving path in the ml namespace has not been scrapeable for 2 minutes.
