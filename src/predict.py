@@ -4,15 +4,23 @@ from transformers import pipeline
 
 CONFIDENCE_THRESHOLD = 0.7
 
-CLF_LABEL2ID = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3}
+CLF_LABEL2ID = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3, "agreement": 4, "notice_period": 5}
 CLF_ID2LABEL = {v: k for k, v in CLF_LABEL2ID.items()}
 
-NER_LABELS   = ["O","B-EXP_DATE","I-EXP_DATE","B-START_DATE","I-START_DATE","B-DURATION","I-DURATION"]
+NER_LABELS   = [
+    "O",
+    "B-EXP_DATE",    "I-EXP_DATE",
+    "B-START_DATE",  "I-START_DATE",
+    "B-DURATION",    "I-DURATION",
+    "B-NOTICE_DATE", "I-NOTICE_DATE",
+]
 
 ALLOWED_ENTITIES = {
-    "expiration": {"EXP_DATE"},
-    "effective":  {"START_DATE"},
-    "renewal":    {"DURATION", "START_DATE"},
+    "expiration":    {"EXP_DATE"},
+    "effective":     {"START_DATE"},
+    "renewal":       {"DURATION", "START_DATE"},
+    "agreement":     {"START_DATE"},
+    "notice_period": {"NOTICE_DATE", "DURATION"},
 }
 
 
@@ -73,7 +81,7 @@ def predict(
         dict with keys: contract_id, has_deadline, uncertain, events
     """
     if not sentences:
-        return {"contract_id": contract_id, "has_deadline": False, "uncertain": False, "events": []}
+        return {"contract_id": contract_id, "has_deadline": False, "uncertain": False, "multi_date_conflict": False, "events": []}
 
     clf_pipe = pipeline(
         "text-classification",
@@ -101,10 +109,11 @@ def predict(
         groups[label].append((sent, score, {r["label"].lower(): r["score"] for r in results}))
 
     if not groups:
-        return {"contract_id": contract_id, "has_deadline": False, "uncertain": False, "events": []}
+        return {"contract_id": contract_id, "has_deadline": False, "uncertain": False, "multi_date_conflict": False, "events": []}
 
-    events    = []
-    any_uncertain = False
+    events          = []
+    any_uncertain   = False
+    any_conflict    = False
 
     for event_type, items in groups.items():
         allowed   = ALLOWED_ENTITIES.get(event_type, set())
@@ -113,32 +122,33 @@ def predict(
         if uncertain:
             any_uncertain = True
 
-        deadline_date = None
-        deadline_type = "computable"
+        # ── Collect ALL resolved dates across every sentence for this event type
+        date_candidates = []
+        deadline_type   = "computable"
 
         for sent, _, _ in items:
             ner_out  = ner_pipe(sent)
             entities = _extract_entities(ner_out, allowed)
             for ent in entities:
-                if ent["entity_type"] == "EXP_DATE":
+                if ent["entity_type"] in ("EXP_DATE", "START_DATE", "NOTICE_DATE"):
                     parsed = _resolve_date(ent["text"])
-                    if parsed:
-                        deadline_date = parsed
+                    if parsed and parsed not in date_candidates:
+                        date_candidates.append(parsed)
                         deadline_type = "explicit"
-                        break
-                elif ent["entity_type"] == "START_DATE" and deadline_date is None:
-                    parsed = _resolve_date(ent["text"])
-                    if parsed:
-                        deadline_date = parsed
-                        deadline_type = "explicit"
-                elif ent["entity_type"] == "DURATION":
+                elif ent["entity_type"] == "DURATION" and not date_candidates:
                     deadline_type = "computable"
-            if deadline_date:
-                break
+
+        # Primary deadline date: first (highest-sentence-score) resolved date
+        deadline_date = date_candidates[0] if date_candidates else None
+        conflict_flag = len(set(date_candidates)) > 1
+        if conflict_flag:
+            any_conflict = True
 
         events.append({
             "event_type":      event_type,
             "deadline_date":   deadline_date,
+            "date_candidates": date_candidates,
+            "conflict_flag":   conflict_flag,
             "deadline_type":   deadline_type,
             "confidence":      round(best_conf, 4),
             "uncertain":       uncertain,
@@ -147,10 +157,11 @@ def predict(
         })
 
     return {
-        "contract_id": contract_id,
-        "has_deadline": len(events) > 0,
-        "uncertain":   any_uncertain,
-        "events":      events,
+        "contract_id":        contract_id,
+        "has_deadline":       len(events) > 0,
+        "uncertain":          any_uncertain,
+        "multi_date_conflict": any_conflict,
+        "events":             events,
     }
 
 

@@ -20,7 +20,13 @@ EXPERIMENT  = "deadline-detection-ner"
 DATA_PATH   = "./data/deadline_sentences"
 OUTPUT_DIR  = "/tmp/deadline-ner"
 
-LABEL_LIST  = ["O","B-EXP_DATE","I-EXP_DATE","B-START_DATE","I-START_DATE","B-DURATION","I-DURATION"]
+LABEL_LIST  = [
+    "O",
+    "B-EXP_DATE",    "I-EXP_DATE",
+    "B-START_DATE",  "I-START_DATE",
+    "B-DURATION",    "I-DURATION",
+    "B-NOTICE_DATE", "I-NOTICE_DATE",
+]
 LABEL2ID    = {l: i for i, l in enumerate(LABEL_LIST)}
 ID2LABEL    = {i: l for i, l in enumerate(LABEL_LIST)}
 
@@ -63,7 +69,8 @@ CONFIGS = {
 
 # O-tag weight=1.0, entity tags upweighted — amplifies rare entity signal
 # (downweighting O caused false-positive explosion: recall=1.0, precision=0.01)
-NER_WEIGHTS = torch.tensor([1.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0])
+# NOTICE_DATE weighted higher (12x) — rarest entity in training data
+NER_WEIGHTS = torch.tensor([1.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 12.0, 12.0])
 
 
 def set_seeds(seed=42):
@@ -133,7 +140,7 @@ def compute_metrics(p):
         "precision": precision_score(true_labels, true_preds, zero_division=0),
         "recall":    recall_score(true_labels,    true_preds, zero_division=0),
     }
-    for entity in ["EXP_DATE", "START_DATE", "DURATION"]:
+    for entity in ["EXP_DATE", "START_DATE", "DURATION", "NOTICE_DATE"]:
         if entity in report:
             metrics[f"{entity}_f1"]       = report[entity]["f1-score"]
             metrics[f"{entity}_precision"] = report[entity]["precision"]
@@ -235,7 +242,7 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
             "max_seq_length": cfg["max_seq_length"],
             "fp16":           cfg["fp16"],
             "num_labels":     len(LABEL_LIST),
-            "label_schema":   "EXP_DATE|START_DATE|DURATION",
+            "label_schema":   "O|B-EXP_DATE|I-EXP_DATE|B-START_DATE|I-START_DATE|B-DURATION|I-DURATION|B-NOTICE_DATE|I-NOTICE_DATE",
             "train_size":     len(train_ds),
             "val_size":       len(val_ds),
             "test_size":      len(test_ds),
@@ -255,6 +262,7 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
             "test_EXP_DATE_f1":      test_result.get("eval_EXP_DATE_f1",      0),
             "test_START_DATE_f1":    test_result.get("eval_START_DATE_f1",    0),
             "test_DURATION_f1":      test_result.get("eval_DURATION_f1",      0),
+            "test_NOTICE_DATE_f1":   test_result.get("eval_NOTICE_DATE_f1",   0),
             "test_loss":             test_result.get("eval_loss", 0),
         })
         if report:
