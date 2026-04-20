@@ -19,6 +19,10 @@ data:
         "DEADLINE_INFERENCE_URL",
         "http://deadline-inference.ml.svc.cluster.local:8001/predict",
     )
+    FEEDBACK_URL = os.getenv(
+        "ONLINE_FEATURES_FEEDBACK_URL",
+        "http://online-features.ml.svc.cluster.local:8000/feedback",
+    )
     RESULTS_DIR = Path(os.getenv("DEADLINE_RESULTS_DIR", "/usr/src/paperless/data/deadline-results"))
 
     def basic_auth_header():
@@ -72,8 +76,19 @@ data:
             headers={"Content-Type": "application/json", "Accept": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=float(os.getenv("INFERENCE_TIMEOUT_SECONDS", "20"))) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def post_feedback(payload):
+        data = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            FEEDBACK_URL,
+            data=data,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=15):
+            return
 
     def build_tags(result):
         tags = []
@@ -90,6 +105,29 @@ data:
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         (RESULTS_DIR / f"{document_id}.json").write_text(json.dumps(result, indent=2))
 
+    def record_feedback_events(document_id, result):
+        event_name = "review_required" if result.get("uncertain") else (
+            "auto_tagged" if result.get("has_deadline") else "no_deadline"
+        )
+        confidence = max((event.get("confidence", 0.0) for event in result.get("events", [])), default=0.0)
+        event_types = sorted({event.get("event_type", "none") for event in result.get("events", [])}) or ["none"]
+        for event_type in event_types:
+            try:
+                post_feedback(
+                    {
+                        "event": event_name,
+                        "document_id": str(document_id),
+                        "event_type": event_type,
+                        "confidence": confidence,
+                        "notes": f"paperless_hook:{result.get('mode', 'unknown')}",
+                    }
+                )
+            except Exception as exc:
+                print(
+                    f"Feedback capture failed for document {document_id} ({event_type}): {exc}",
+                    file=sys.stderr,
+                )
+
     def main():
         document_id = int(os.environ["DOCUMENT_ID"])
         document = get_document(document_id)
@@ -97,13 +135,21 @@ data:
         if not content:
             print(f"No OCR content available for document {document_id}; skipping inference.")
             return 0
-        result = call_inference(
-            document_id=document_id,
-            content=content,
-            document_type=document.get("document_type"),
-            filename=document.get("original_file_name") or document.get("archived_file_name"),
-        )
-        persist_result(document_id, result)
+        try:
+            result = call_inference(
+                document_id=document_id,
+                content=content,
+                document_type=document.get("document_type"),
+                filename=document.get("original_file_name") or document.get("archived_file_name"),
+            )
+            persist_result(document_id, result)
+            record_feedback_events(document_id, result)
+        except Exception as exc:
+            print(
+                f"Skipping deadline inference for document {document_id} after non-fatal error: {exc}",
+                file=sys.stderr,
+            )
+            return 0
         tag_names = build_tags(result)
         if tag_names:
             tag_ids = [ensure_tag(name) for name in tag_names]
