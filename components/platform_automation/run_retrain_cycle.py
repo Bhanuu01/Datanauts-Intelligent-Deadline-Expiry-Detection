@@ -196,6 +196,7 @@ def build_evaluation_metrics(package_manifest: Dict[str, Any]) -> Dict[str, Any]
 def orchestrate_training() -> Dict[str, Any]:
     training_root = Path(os.getenv("TRAINING_ROOT", "/app/components/training"))
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.platform.svc.cluster.local:5000")
+    training_data_path = Path(os.getenv("TRAINING_DATA_PATH", "/app/data/deadline_sentences"))
     shared_env = os.environ.copy()
     shared_env["MLFLOW_TRACKING_URI"] = tracking_uri
     shared_env["MLFLOW_S3_ENDPOINT_URL"] = os.getenv(
@@ -207,10 +208,21 @@ def orchestrate_training() -> Dict[str, Any]:
         "classifier_model": os.getenv("CLASSIFIER_MODEL_NAME", "roberta_clf_v5"),
     }
 
-    commands = [
+    commands: List[List[str]] = []
+    if os.getenv("FORCE_REBUILD_DATASET", "false").lower() in {"1", "true", "yes"} or not training_data_path.exists():
+        commands.append(
+            [
+                "python",
+                str(training_root / "src" / "build_dataset.py"),
+                "--save_path",
+                str(training_data_path),
+            ]
+        )
+
+    commands.extend([
         ["python", str(training_root / "src" / "train_ner.py"), "--model", config["ner_model"]],
         ["python", str(training_root / "src" / "train_classifier.py"), "--model", config["classifier_model"]],
-    ]
+    ])
 
     results = []
     for command in commands:
