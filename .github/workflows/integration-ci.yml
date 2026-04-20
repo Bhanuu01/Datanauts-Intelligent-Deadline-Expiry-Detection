@@ -3,6 +3,7 @@ name: Integration CI/CD
 on:
   push:
     branches:
+      - main
       - integration/apr20
   pull_request:
   workflow_dispatch:
