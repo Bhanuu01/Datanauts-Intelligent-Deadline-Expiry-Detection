@@ -24,10 +24,10 @@ os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
 MLFLOW_URI  = "http://129.114.27.190:8000"
 EXPERIMENT  = "deadline-detection-classifier-ray-tune"
 BASE_MODEL  = "roberta-base"
-DATA_PATH   = "./data/deadline_sentences"
-NUM_LABELS  = 4
+DATA_PATH   = "/app/data/deadline_sentences"
+NUM_LABELS  = 6
 
-CLF_LABEL2ID = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3}
+CLF_LABEL2ID = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3, "agreement": 4, "notice_period": 5}
 CLF_ID2LABEL = {v: k for k, v in CLF_LABEL2ID.items()}
 
 mlflow.set_tracking_uri(MLFLOW_URI)
@@ -82,24 +82,33 @@ def compute_clf_metrics(p):
 
 
 def train_trial(config):
-    lr           = config["learning_rate"]
-    batch_size   = config["batch_size"]
-    warmup_ratio = config["warmup_ratio"]
-    epochs       = config["epochs"]
-    none_ratio   = config["none_ratio"]
-    run_name     = f"clf_lr{lr:.1e}_bs{batch_size}_nr{none_ratio}_ep{epochs}"
+    lr              = config["learning_rate"]
+    batch_size      = config["batch_size"]
+    warmup_ratio    = config["warmup_ratio"]
+    weight_decay    = config["weight_decay"]
+    epochs          = config["epochs"]
+    none_ratio      = config["none_ratio"]
+    max_seq_length  = config["max_seq_length"]
+    label_smoothing = config["label_smoothing"]
+    run_name        = f"clf_lr{lr:.1e}_bs{batch_size}_wd{weight_decay:.0e}_ep{epochs}"
 
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT)
     with mlflow.start_run(run_name=run_name):
         mlflow.log_params({
-            "learning_rate": lr, "batch_size": batch_size,
-            "warmup_ratio":  warmup_ratio, "epochs": epochs,
-            "none_ratio":    none_ratio,
-            "base_model":    BASE_MODEL, "search_method": "Ray Tune ASHA",
-            "num_labels":    NUM_LABELS,
-            "label_schema":  "none|expiration|effective|renewal",
-            "gpu":           torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
+            "learning_rate":   lr,
+            "batch_size":      batch_size,
+            "warmup_ratio":    warmup_ratio,
+            "weight_decay":    weight_decay,
+            "epochs":          epochs,
+            "none_ratio":      none_ratio,
+            "max_seq_length":  max_seq_length,
+            "label_smoothing": label_smoothing,
+            "base_model":      BASE_MODEL,
+            "search_method":   "Ray Tune ASHA",
+            "num_labels":      NUM_LABELS,
+            "label_schema":    "none|expiration|effective|renewal|agreement|notice_period",
+            "gpu":             torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
         })
 
         dd        = load_from_disk(DATA_PATH)
@@ -112,12 +121,14 @@ def train_trial(config):
 
         def tokenize(examples):
             return tokenizer(examples["sentence"], truncation=True,
-                             max_length=256, padding=False)
+                             max_length=max_seq_length, padding=False)
 
-        remove    = [c for c in train_ds.column_names if c != "classifier_label"]
-        tok_train = train_ds.map(tokenize, batched=True, remove_columns=remove).rename_column("classifier_label", "label")
-        tok_val   = val_ds.map(tokenize,   batched=True, remove_columns=remove).rename_column("classifier_label", "label")
-        tok_test  = test_ds.map(tokenize,  batched=True, remove_columns=remove).rename_column("classifier_label", "label")
+        train_remove = [c for c in train_ds.column_names if c != "classifier_label"]
+        val_remove   = [c for c in val_ds.column_names   if c != "classifier_label"]
+        test_remove  = [c for c in test_ds.column_names  if c != "classifier_label"]
+        tok_train = train_ds.map(tokenize, batched=True, remove_columns=train_remove).rename_column("classifier_label", "label")
+        tok_val   = val_ds.map(tokenize,   batched=True, remove_columns=val_remove).rename_column("classifier_label", "label")
+        tok_test  = test_ds.map(tokenize,  batched=True, remove_columns=test_remove).rename_column("classifier_label", "label")
         for ds in [tok_train, tok_val, tok_test]:
             ds.set_format("torch")
 
@@ -133,7 +144,8 @@ def train_trial(config):
             per_device_eval_batch_size=batch_size,
             learning_rate=lr,
             warmup_ratio=warmup_ratio,
-            weight_decay=0.01,
+            weight_decay=weight_decay,
+            label_smoothing_factor=label_smoothing,
             fp16=torch.cuda.is_available(),
             eval_strategy="epoch",
             save_strategy="epoch",
@@ -156,16 +168,24 @@ def train_trial(config):
         train_result = trainer.train()
         train_time   = time.time() - t0
 
-        preds_out = trainer.predict(tok_test)
-        test_f1   = float(skf1(preds_out.label_ids,
-                               np.argmax(preds_out.predictions, axis=1),
-                               average="macro", zero_division=0))
+        preds_out  = trainer.predict(tok_test)
+        preds_flat = np.argmax(preds_out.predictions, axis=1)
+        labels_flat = preds_out.label_ids
+        test_f1    = float(skf1(labels_flat, preds_flat, average="macro",  zero_division=0))
+        test_acc   = float(accuracy_score(labels_flat, preds_flat))
+
+        per_class_f1 = {
+            f"test_f1_{name}": float(skf1(labels_flat, preds_flat, labels=[i], average="macro", zero_division=0))
+            for i, name in enumerate(["none", "expiration", "effective", "renewal"])
+        }
 
         mlflow.log_metrics({
             "test_f1":              test_f1,
+            "test_accuracy":        test_acc,
             "total_train_time_sec": train_time,
             "time_per_epoch_sec":   train_time / epochs,
             "train_loss":           train_result.training_loss,
+            **per_class_f1,
         })
 
     from ray import train as ray_train
@@ -175,18 +195,21 @@ def train_trial(config):
 def main():
     ray.init(ignore_reinit_error=True)
     search_space = {
-        "learning_rate": tune.loguniform(1e-5, 1e-4),
-        "batch_size":    tune.choice([8, 16]),
-        "warmup_ratio":  tune.uniform(0.05, 0.20),
-        "epochs":        tune.choice([3, 5]),
-        "none_ratio":    tune.choice([8, 10, 12]),
+        "learning_rate":   tune.loguniform(1e-5, 1e-4),
+        "batch_size":      tune.choice([8, 16, 32]),
+        "warmup_ratio":    tune.uniform(0.05, 0.20),
+        "weight_decay":    tune.loguniform(1e-3, 0.1),
+        "epochs":          tune.choice([3, 5, 7]),
+        "none_ratio":      tune.choice([5, 8, 10, 12]),
+        "max_seq_length":  tune.choice([128, 256]),
+        "label_smoothing": tune.choice([0.0, 0.05, 0.1]),
     }
-    scheduler = ASHAScheduler(max_t=5, grace_period=1, reduction_factor=2)
+    scheduler = ASHAScheduler(max_t=7, grace_period=2, reduction_factor=2)
     tuner = tune.Tuner(
         tune.with_resources(train_trial, resources={"GPU": 0.5, "CPU": 4}),
         param_space=search_space,
         tune_config=TuneConfig(
-            metric="f1", mode="max", num_samples=8,
+            metric="f1", mode="max", num_samples=16,
             scheduler=scheduler, max_concurrent_trials=2,
         ),
         run_config=RunConfig(
@@ -204,6 +227,9 @@ def main():
     print(f"  warmup_ratio:  {best.config['warmup_ratio']:.3f}")
     print(f"  epochs:        {best.config['epochs']}")
     print(f"  none_ratio:    {best.config['none_ratio']}")
+    print(f"  max_seq_length:{best.config['max_seq_length']}")
+    print(f"  weight_decay:  {best.config['weight_decay']:.2e}")
+    print(f"  label_smoothing:{best.config['label_smoothing']}")
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT)
     with mlflow.start_run(run_name="RAY_TUNE_CLF_BEST_SUMMARY"):

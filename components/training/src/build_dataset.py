@@ -9,11 +9,17 @@ os.environ["GIT_PYTHON_REFRESH"] = "quiet"
 DATASET_ID = "tanvitakavane/datanauts_project_cuad-deadline-ner-version2"
 SAVE_PATH  = "./data/deadline_sentences"
 
-NER_LABELS = ["O","B-EXP_DATE","I-EXP_DATE","B-START_DATE","I-START_DATE","B-DURATION","I-DURATION"]
+NER_LABELS = [
+    "O",
+    "B-EXP_DATE",   "I-EXP_DATE",
+    "B-START_DATE", "I-START_DATE",
+    "B-DURATION",   "I-DURATION",
+    "B-NOTICE_DATE","I-NOTICE_DATE",
+]
 NER_L2I    = {l: i for i, l in enumerate(NER_LABELS)}
 
-CLF_L2I = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3}
-CLF_I2L = {0: "none", 1: "expiration", 2: "effective", 3: "renewal"}
+CLF_L2I = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3, "agreement": 4, "notice_period": 5}
+CLF_I2L = {0: "none", 1: "expiration", 2: "effective", 3: "renewal", 4: "agreement", 5: "notice_period"}
 
 # ── Regex: Date patterns (8 formats) ───────────────────────────────────────
 _ML  = r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
@@ -143,9 +149,13 @@ def bio_tag_regex(tokens, ctype, anchor_iso=None):
     offsets = _token_offsets(tokens)
     tags    = ["O"] * len(tokens)
 
-    if ctype in ("expiration", "effective"):
-        b_tag = "B-EXP_DATE"   if ctype == "expiration" else "B-START_DATE"
-        i_tag = "I-EXP_DATE"   if ctype == "expiration" else "I-START_DATE"
+    if ctype in ("expiration", "effective", "agreement"):
+        if ctype == "expiration":
+            b_tag, i_tag = "B-EXP_DATE",   "I-EXP_DATE"
+        elif ctype == "effective":
+            b_tag, i_tag = "B-START_DATE", "I-START_DATE"
+        else:  # agreement
+            b_tag, i_tag = "B-START_DATE", "I-START_DATE"
         matches = list(DATE_RE.finditer(text))
         if not matches:
             return tags
@@ -157,7 +167,19 @@ def bio_tag_regex(tokens, ctype, anchor_iso=None):
             best = non_year[0] if non_year else matches[0]
         _apply_bio(tags, offsets, best.start(), best.end(), b_tag, i_tag)
 
-    elif ctype == "duration":
+    elif ctype == "notice_period":
+        matches = list(DATE_RE.finditer(text))
+        if matches:
+            non_year = [m for m in matches
+                        if not re.fullmatch(r"(?:19|20)\d{2}", m.group())]
+            best = non_year[0] if non_year else matches[0]
+            _apply_bio(tags, offsets, best.start(), best.end(), "B-NOTICE_DATE", "I-NOTICE_DATE")
+        else:
+            dur_matches = list(DURATION_RE.finditer(text))
+            for m in dur_matches:
+                _apply_bio(tags, offsets, m.start(), m.end(), "B-DURATION", "I-DURATION")
+
+    elif ctype == "renewal":
         matches = list(DURATION_RE.finditer(text))
         if matches:
             for m in matches:
@@ -175,14 +197,21 @@ def bio_tag_regex(tokens, ctype, anchor_iso=None):
 
 # ── Contract processing — hybrid strategy ──────────────────────────────────
 
+_ANCHOR_CTYPES = {"expiration", "effective", "agreement"}
+
+
 def process_contract(row, split_name):
     exp_clause  = normalise(clean_clause(row.get("Expiration Date",  "") or ""))
     exp_iso     = row.get("expiration_date_iso") or None
     eff_clause  = normalise(clean_clause(row.get("Effective Date",   "") or ""))
     eff_iso     = row.get("effective_date_iso")  or None
+    agr_clause  = normalise(clean_clause(row.get("Agreement Date",   "") or ""))
+    agr_iso     = row.get("agreement_date_iso")  or None
     ren_clause  = normalise(clean_clause(row.get("Renewal Term",     "") or ""))
+    ntc_clause  = normalise(clean_clause(row.get("Notice Period To Terminate Renewal", "") or ""))
     ocr         = normalise(row.get("ocr_text", "") or "")
     contract_id = row.get("Filename", "")
+    hf_event    = (row.get("event_type") or "").strip().lower()
     examples    = []
     seen_sents  = set()
 
@@ -191,7 +220,7 @@ def process_contract(row, split_name):
         if len(tokens) < 8 or sent in seen_sents:
             return
         seen_sents.add(sent)
-        anchor   = gt if (ctype in ("expiration", "effective") and gt) else None
+        anchor   = gt if (ctype in _ANCHOR_CTYPES and gt) else None
         ner_tags = [NER_L2I[t] for t in bio_tag_regex(tokens, ctype, anchor)]
         examples.append({
             "contract_id":       contract_id,
@@ -205,15 +234,34 @@ def process_contract(row, split_name):
 
     # ── Positive examples: directly from clause columns (no overlap guessing)
     for sent in sent_split(exp_clause):
-        add(sent, 1, "expiration", exp_iso or "")
+        add(sent, CLF_L2I["expiration"],    "expiration",   exp_iso or "")
     for sent in sent_split(eff_clause):
-        add(sent, 2, "effective",  eff_iso or "")
+        add(sent, CLF_L2I["effective"],     "effective",    eff_iso or "")
+    for sent in sent_split(agr_clause):
+        add(sent, CLF_L2I["agreement"],     "agreement",    agr_iso or "")
     for sent in sent_split(ren_clause):
-        add(sent, 3, "duration",   "")
+        add(sent, CLF_L2I["renewal"],       "renewal",      "")
+    for sent in sent_split(ntc_clause):
+        add(sent, CLF_L2I["notice_period"], "notice_period", "")
+
+    # ── event_type column validation: warn on label disagreement
+    # HF event_type is comma-separated (e.g. "expiration,agreement,effective")
+    if hf_event and hf_event not in ("nan", "", "none"):
+        hf_types = {t.strip() for t in hf_event.split(",") if t.strip()}
+        derived = set()
+        if exp_clause:  derived.add("expiration")
+        if eff_clause:  derived.add("effective")
+        if agr_clause:  derived.add("agreement")
+        if ren_clause:  derived.add("renewal")
+        if ntc_clause:  derived.add("notice_period")
+        unexpected = hf_types - derived - {"none", ""}
+        if unexpected:
+            print(f"[WARN] {contract_id}: HF has types {unexpected} but no clause text found for them")
 
     # ── None examples: OCR sentences not in any clause (matches inference distribution)
     all_clause_words = set(
-        (exp_clause + " " + eff_clause + " " + ren_clause).lower().split()
+        (exp_clause + " " + eff_clause + " " + agr_clause + " " +
+         ren_clause + " " + ntc_clause).lower().split()
     )
     for sent in sent_split(ocr):
         if sent in seen_sents:
@@ -223,7 +271,7 @@ def process_contract(row, split_name):
             overlap = len(sw & all_clause_words) / max(len(sw), 1)
             if overlap >= 0.3:
                 continue
-        add(sent, 0, "none", "")
+        add(sent, CLF_L2I["none"], "none", "")
 
     return examples
 
@@ -233,6 +281,20 @@ def build_split(hf_split, name):
     for row in hf_split:
         rows.extend(process_contract(row, name))
     return Dataset.from_list(rows)
+
+
+def assert_no_split_leakage(raw):
+    """Assert that no Filename appears in more than one split (contract-level isolation)."""
+    split_ids = {}
+    for split_name in ("train", "val", "test"):
+        for row in raw[split_name]:
+            fid = row.get("Filename", "")
+            if fid in split_ids:
+                raise AssertionError(
+                    f"[LEAKAGE] '{fid}' appears in both '{split_ids[fid]}' and '{split_name}'!"
+                )
+            split_ids[fid] = split_name
+    print(f"[OK] Split leakage check passed: {len(split_ids)} unique contracts across train/val/test")
 
 
 def main():
@@ -245,6 +307,7 @@ def main():
     print("Contracts — train:", len(raw["train"]),
           "| val:",  len(raw["val"]),
           "| test:", len(raw["test"]))
+    assert_no_split_leakage(raw)
 
     train_ds = build_split(raw["train"], "train")
     val_ds   = build_split(raw["val"],   "val")
@@ -260,11 +323,15 @@ def main():
               f"none={c[0]:>5} ({100*c[0]/max(total,1):.1f}%)  "
               f"expiration={c[1]:>4} ({100*c[1]/max(total,1):.1f}%)  "
               f"effective={c[2]:>4} ({100*c[2]/max(total,1):.1f}%)  "
-              f"renewal={c[3]:>4} ({100*c[3]/max(total,1):.1f}%)")
+              f"renewal={c[3]:>4} ({100*c[3]/max(total,1):.1f}%)  "
+              f"agreement={c[4]:>4} ({100*c[4]/max(total,1):.1f}%)  "
+              f"notice_period={c[5]:>4} ({100*c[5]/max(total,1):.1f}%)")
         ner_counts = Counter()
         for tags in ds["ner_tags"]:
             ner_counts.update(tags)
         print(f"         NER tags: { {NER_LABELS[k]: v for k, v in sorted(ner_counts.items())} }")
+        pos = sum(c[i] for i in range(1, len(CLF_L2I)))
+        print(f"         Positives: {pos} ({100*pos/max(total,1):.1f}%  of split)")
 
     os.makedirs(args.save_path, exist_ok=True)
     dd.save_to_disk(args.save_path)
@@ -277,6 +344,8 @@ def main():
             "clf_label2id": CLF_L2I,
             "clf_id2label": {str(k): v for k, v in CLF_I2L.items()},
             "save_path":    args.save_path,
+            "num_clf_labels": len(CLF_L2I),
+            "num_ner_labels": len(NER_LABELS),
         }, f, indent=2)
 
     print(f"\nSaved to {args.save_path}")

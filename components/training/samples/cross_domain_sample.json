@@ -1,0 +1,72 @@
+[
+  {
+    "id": "cd-001",
+    "source": "residential_lease",
+    "description": "Lease expiration — real estate domain",
+    "sentence": "This lease shall expire on June 30, 2025, unless renewed by written agreement of both parties.",
+    "expected_label": "expiration"
+  },
+  {
+    "id": "cd-002",
+    "source": "residential_lease",
+    "description": "Lease effective date — real estate domain",
+    "sentence": "The tenancy shall commence on February 1, 2024 and the tenant agrees to all terms herein.",
+    "expected_label": "effective"
+  },
+  {
+    "id": "cd-003",
+    "source": "purchase_order",
+    "description": "Payment due date — procurement domain",
+    "sentence": "Payment is due within 30 days of invoice date; amounts unpaid after March 15, 2025 will accrue interest.",
+    "expected_label": "expiration"
+  },
+  {
+    "id": "cd-004",
+    "source": "purchase_order",
+    "description": "None — standard purchase order boilerplate",
+    "sentence": "All goods must be delivered in accordance with the specifications outlined in Exhibit A.",
+    "expected_label": "none"
+  },
+  {
+    "id": "cd-005",
+    "source": "insurance_policy",
+    "description": "Policy renewal — insurance domain",
+    "sentence": "This policy automatically renews annually on the anniversary date unless the insured provides 60 days written notice.",
+    "expected_label": "renewal"
+  },
+  {
+    "id": "cd-006",
+    "source": "insurance_policy",
+    "description": "Notice period to cancel renewal — insurance domain",
+    "sentence": "To prevent automatic renewal, written cancellation notice must be received no later than 30 days prior to the renewal date.",
+    "expected_label": "notice_period"
+  },
+  {
+    "id": "cd-007",
+    "source": "employment_offer",
+    "description": "Offer agreement date — HR domain",
+    "sentence": "This offer of employment is made as of January 15, 2024 and is contingent upon successful background check completion.",
+    "expected_label": "agreement"
+  },
+  {
+    "id": "cd-008",
+    "source": "employment_offer",
+    "description": "None — non-deadline HR language",
+    "sentence": "The employee agrees to maintain confidentiality of all proprietary information acquired during employment.",
+    "expected_label": "none"
+  },
+  {
+    "id": "cd-009",
+    "source": "software_license",
+    "description": "License expiration — SaaS domain",
+    "sentence": "The software license granted hereunder shall terminate on December 31, 2025 unless renewed prior to that date.",
+    "expected_label": "expiration"
+  },
+  {
+    "id": "cd-010",
+    "source": "compliance_regulation",
+    "description": "Regulatory deadline — compliance domain",
+    "sentence": "All regulated entities must submit their annual compliance report by April 30, 2025 or face penalties.",
+    "expected_label": "expiration"
+  }
+]
