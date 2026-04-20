@@ -156,13 +156,13 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "increase(deadline_inference_failures_total[15m])",
+              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total[15m])) or vector(0)",
               "legendFormat": "__auto",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Inference Failures (15m)",
+          "title": "ONNX Review Required (15m)",
           "type": "stat"
         },
         {
@@ -216,7 +216,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(rate(deadline_onnx_predictions_total[5m]))",
+              "expr": "sum(rate(deadline_onnx_predictions_total[5m])) or vector(0)",
               "legendFormat": "__auto",
               "range": true,
               "refId": "A"
@@ -248,7 +248,7 @@ data:
                   }
                 ]
               },
-              "unit": "percentunit"
+              "unit": "gbytes"
             },
             "overrides": []
           },
@@ -276,13 +276,13 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "max((container_memory_working_set_bytes{namespace=\"platform\",pod=~\"mlflow.*|minio.*\",container!=\"\",image!=\"\"}) / on(namespace,pod,container) kube_pod_container_resource_limits{namespace=\"platform\",resource=\"memory\",unit=\"byte\"})",
+              "expr": "(sum(container_memory_working_set_bytes{namespace=\"platform\",pod=~\"mlflow.*|minio.*\",container!=\"\",image!=\"\"}) / 1073741824) or vector(0)",
               "legendFormat": "__auto",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Platform Memory Utilization",
+          "title": "Platform Working Set (GiB)",
           "type": "stat"
         },
         {
@@ -320,13 +320,20 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum by (mode) (rate(deadline_inference_requests_total[5m]))",
-              "legendFormat": "{{mode}}",
+              "expr": "sum(rate(deadline_onnx_predictions_total[5m])) or vector(0)",
+              "legendFormat": "onnx predictions",
               "range": true,
               "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(online_features_ingest_requests_total[5m])) or vector(0)",
+              "legendFormat": "online-features ingest",
+              "range": true,
+              "refId": "B"
             }
           ],
-          "title": "Inference Request Rate by Mode",
+          "title": "Serving Request Rate",
           "type": "timeseries"
         },
         {
@@ -364,13 +371,20 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum by (mode) (rate(deadline_inference_events_total[5m]))",
-              "legendFormat": "{{mode}}",
+              "expr": "sum(rate(deadline_onnx_uncertain_predictions_total[5m])) or vector(0)",
+              "legendFormat": "onnx uncertain",
               "range": true,
               "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(deadline_onnx_user_corrections_total[5m])) or vector(0)",
+              "legendFormat": "user corrections",
+              "range": true,
+              "refId": "B"
             }
           ],
-          "title": "Inference Events Returned",
+          "title": "Review and Feedback Activity",
           "type": "timeseries"
         },
         {
@@ -383,7 +397,7 @@ data:
               "color": {
                 "mode": "palette-classic"
               },
-              "unit": "s"
+              "unit": "percentunit"
             },
             "overrides": []
           },
@@ -408,13 +422,13 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(deadline_inference_latency_seconds_bucket[5m])))",
-              "legendFormat": "p95 latency",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_confidence_score_bucket[5m]))) or vector(0)",
+              "legendFormat": "p95 confidence",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Inference P95 Latency",
+          "title": "ONNX P95 Confidence",
           "type": "timeseries"
         },
         {
@@ -503,20 +517,27 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(rate(deadline_onnx_predictions_total[5m]))",
-              "legendFormat": "onnx predictions",
+              "expr": "sum(increase(deadline_onnx_predictions_total[15m])) or vector(0)",
+              "legendFormat": "predictions (15m)",
               "range": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
-              "expr": "sum(rate(deadline_onnx_uncertain_predictions_total[5m]))",
-              "legendFormat": "onnx uncertain",
+              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total[15m])) or vector(0)",
+              "legendFormat": "uncertain (15m)",
               "range": true,
               "refId": "B"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(increase(deadline_onnx_user_corrections_total[15m])) or vector(0)",
+              "legendFormat": "corrections (15m)",
+              "range": true,
+              "refId": "C"
             }
           ],
-          "title": "ONNX Serving Throughput",
+          "title": "ONNX Outcome Volume",
           "type": "timeseries"
         },
         {
