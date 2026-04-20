@@ -270,17 +270,23 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
         })
         mlflow.set_tag("label_source", "silver_regex")
         if report:
-            mlflow.log_text(report, "ner_classification_report.txt")
+            try:
+                mlflow.log_text(report, "ner_classification_report.txt")
+            except Exception as art_err:
+                print(f"[WARN] Could not upload classification report artifact: {art_err}")
         model_dir = f"{OUTPUT_DIR}-{model_name}"
         if os.path.isdir(model_dir):
-            mlflow.log_artifacts(model_dir, artifact_path="model")
-            print(f"Model weights uploaded → MinIO (artifact_path=model)")
             try:
+                mlflow.log_artifacts(model_dir, artifact_path="model")
+                print(f"Model weights uploaded → MinIO (artifact_path=model)")
                 run_id = mlflow.active_run().info.run_id
-                mlflow.register_model(f"runs:/{run_id}/model", model_name)
-                print(f"Model registered in MLflow Registry as '{model_name}'")
-            except Exception as reg_err:
-                print(f"[WARN] Model Registry unavailable: {reg_err}")
+                try:
+                    mlflow.register_model(f"runs:/{run_id}/model", model_name)
+                    print(f"Model registered in MLflow Registry as '{model_name}'")
+                except Exception as reg_err:
+                    print(f"[WARN] Model Registry unavailable: {reg_err}")
+            except Exception as upload_err:
+                print(f"[WARN] Could not upload model artifacts to MinIO: {upload_err}")
         print(f"Logged {model_name} → {MLFLOW_URI}")
 
 
