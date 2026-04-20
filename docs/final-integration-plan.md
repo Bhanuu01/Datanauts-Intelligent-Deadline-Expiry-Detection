@@ -6,11 +6,11 @@ This branch turns the project from role-separated milestone work into a single d
 
 - `components/data`: imported from `origin/data/phase2-submission`
 - `components/training`: imported from `origin/training/phase2-submission`
-- `components/inference_service`: internal API that wraps the training inference flow and provides a fallback mode when model artifacts are not mounted yet
+- `components/inference_service`: legacy API kept for historical reference while the integrated deployment uses the ONNX serving path
 - `components/platform_automation`: platform-owned automation scripts for retrain checks and promotion gates
 - `components/serving`: serving teammate's quantized ONNX path, adapted to shared model storage and feedback logging
-- `k8s/ml`: Kubernetes manifests for the ML namespace, model storage, online features, inference, and scheduled automation jobs
-- `k8s/release`: staging, canary, production inference manifests plus release-promotion automation
+- `k8s/ml`: Kubernetes manifests for the ML namespace, model storage, online features, ONNX serving, and scheduled automation jobs
+- `k8s/release`: staging, canary, production ONNX serving manifests plus release-promotion automation
 - `k8s/monitoring`: Prometheus, Grafana, kube-state-metrics, scrape config, and basic alert rules
 - `components/paperless_hooks`: Paperless post-consume integration that calls the inference service and tags processed documents
 - `scripts/chameleon-health-check.sh`: one-command cluster health snapshot for demos and recovery
@@ -21,19 +21,18 @@ This branch turns the project from role-separated milestone work into a single d
 
 1. Paperless ingests OCR text.
 2. `online-features` prepares candidate deadline sentences and writes production ingest records to shared storage.
-3. `deadline-inference` runs model inference or a fallback extraction path and persists prediction summaries on the same shared volume.
+3. `deadline-onnx-serving` runs the live two-stage ONNX model path and persists serving feedback on the shared volume.
 4. The Paperless post-consume hook writes feedback events to the shared `online-features` feedback endpoint; the synthetic generator writes the same event format to emulate user confirmations/edits/dismissals.
 5. `retrain-pipeline` evaluates thresholds and launches the training scripts on schedule.
 6. Data quality and drift jobs run on their own cadence.
-7. An optional ONNX quantized serving path can be deployed as an optimized or canary serving variant.
-8. A separate release layer runs staging, canary, and production inference deployments in parallel.
-9. The release-promotion job can patch the canonical `deadline-inference` service to point at the next approved release channel.
+7. A separate release layer runs staging, canary, and production ONNX serving deployments in parallel.
+8. The release-promotion job can patch the canonical `deadline-onnx-serving` service to point at the next approved release channel.
 
 ## Current integrated state
 
 1. Paperless, Postgres, Redis, MinIO, and MLflow are deployed in Kubernetes on Chameleon.
-2. Paperless document ingestion triggers a post-consume hook that calls `deadline-inference`.
-3. `online-features` and `deadline-inference` expose `/metrics` and are scraped by Prometheus.
+2. Paperless document ingestion triggers a post-consume hook that calls `deadline-onnx-serving`.
+3. `online-features` and `deadline-onnx-serving` expose `/metrics` and are scraped by Prometheus.
 4. Retrain, promotion, drift-monitor, and data-quality jobs are defined as Kubernetes CronJobs.
 5. Staging, canary, and production inference deployments are defined in `k8s/release` and expose release-aware `/health` responses.
 6. Model artifacts, production-ingest logs, prediction summaries, and feedback events are stored on shared persistent volume storage.
@@ -63,22 +62,22 @@ This branch turns the project from role-separated milestone work into a single d
   - `/tmp/deadline-clf-roberta_clf_v5`
 - Current evaluation command
   - `python src/evaluate.py --clf_model <path> --ner_model <path> --threshold 0.7`
-- Serving-owned optimization path
+- Serving-owned live path
   - `components/serving/app_onnx_quant.py`
-  - optional K8s manifests: `k8s/ml/onnx-serving-deployment.yaml`, `k8s/ml/onnx-serving-service.yaml`
+  - K8s manifests: `k8s/ml/onnx-serving-deployment.yaml`, `k8s/ml/onnx-serving-service.yaml`
   - expected model location: `/models/onnx_quantized_model`
 - Release progression
-  - staging: `deadline-inference-staging`
-  - canary: `deadline-inference-canary`
-  - production: `deadline-inference-production`
+  - staging: `deadline-onnx-serving-staging`
+  - canary: `deadline-onnx-serving-canary`
+  - production: `deadline-onnx-serving-production`
   - promotion planner: `components/platform_automation/promote_release.py`
-  - live service patch target: `deadline-inference`
+  - live service patch target: `deadline-onnx-serving`
   - release manifests: `k8s/release/kustomization.yaml`
 
 ## DevOps Completion Notes
 
 1. CI validation exists in `.github/workflows/integration-ci.yml` and checks the integrated services plus release manifests.
-2. Release automation now supports `promote` and `rollback` actions and can patch the canonical inference service selector inside Kubernetes.
+2. Release automation now supports `promote` and `rollback` actions and can patch the canonical ONNX serving service selector inside Kubernetes.
 3. Alerting covers the main failure mode encountered during integration: node `DiskPressure` leading to evicted pods and image-pull failures.
 4. The rebuild/import helper now prunes Docker artifacts after import so repeated image refreshes do not consume the node's local disk indefinitely.
 5. Paperless now exercises the same `online-features -> inference -> feedback-log` path used by scheduled retraining and the synthetic data generator.

@@ -172,7 +172,7 @@ jobs:
 
       - name: Restart live inference deployments
         run: |
-          kubectl rollout restart deployment/deadline-inference -n ml
-          kubectl rollout restart deployment/deadline-inference-staging -n ml
-          kubectl rollout restart deployment/deadline-inference-canary -n ml
-          kubectl rollout restart deployment/deadline-inference-production -n ml
+          kubectl rollout restart deployment/deadline-onnx-serving -n ml
+          kubectl rollout restart deployment/deadline-onnx-serving-staging -n ml
+          kubectl rollout restart deployment/deadline-onnx-serving-canary -n ml
+          kubectl rollout restart deployment/deadline-onnx-serving-production -n ml

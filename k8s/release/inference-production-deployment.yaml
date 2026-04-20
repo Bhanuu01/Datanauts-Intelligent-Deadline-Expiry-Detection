@@ -1,49 +1,49 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: deadline-inference-production
+  name: deadline-onnx-serving-production
   namespace: ml
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: deadline-inference-production
+      app: deadline-onnx-serving-production
       release_channel: production
   template:
     metadata:
       labels:
-        app: deadline-inference-production
+        app: deadline-onnx-serving-production
         release_channel: production
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8001"
+        prometheus.io/port: "8004"
         prometheus.io/path: /metrics
     spec:
       containers:
-        - name: deadline-inference-production
-          image: ghcr.io/bhanuu01/datanauts-inference-runtime:latest
+        - name: deadline-onnx-serving-production
+          image: ghcr.io/bhanuu01/datanauts-onnx-serving:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8001
+            - containerPort: 8004
           env:
-            - name: CLF_MODEL_PATH
-              value: /models/classifier
-            - name: NER_MODEL_PATH
-              value: /models/ner
-            - name: CONFIDENCE_THRESHOLD
+            - name: ONNX_MODEL_PATH
+              value: /models/onnx_quantized_model
+            - name: ONNX_CLF_MODEL_PATH
+              value: /models/onnx_quantized_model/onnx_quantized_clf
+            - name: ONNX_NER_MODEL_PATH
+              value: /models/onnx_quantized_model/onnx_quantized_ner
+            - name: ONNX_CONFIDENCE_THRESHOLD
               value: "0.7"
-            - name: ONLINE_FEATURES_URL
-              value: http://online-features.ml.svc.cluster.local:8000/ingest
-            - name: PREDICTION_LOG_PATH
-              value: /models/inference_predictions_production.jsonl
+            - name: FEEDBACK_LOG_PATH
+              value: /models/serving_feedback_production.jsonl
             - name: RELEASE_CHANNEL
               value: production
           resources:
             requests:
               cpu: "250m"
-              memory: "512Mi"
+              memory: "1Gi"
             limits:
-              cpu: "1000m"
+              cpu: "2000m"
               memory: "2Gi"
           volumeMounts:
             - name: model-storage
@@ -51,9 +51,17 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: 8001
-            initialDelaySeconds: 20
-            periodSeconds: 15
+              port: 8004
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 120
+            periodSeconds: 20
+            timeoutSeconds: 5
       volumes:
         - name: model-storage
           persistentVolumeClaim:
