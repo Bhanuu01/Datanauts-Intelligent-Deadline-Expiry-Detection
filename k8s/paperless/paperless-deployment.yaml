@@ -72,6 +72,8 @@ spec:
               value: http://online-features.ml.svc.cluster.local:8000/feedback
             - name: DEADLINE_RESULTS_DIR
               value: /usr/src/paperless/data/deadline-results
+            - name: INFERENCE_TIMEOUT_SECONDS
+              value: "45"
             - name: PAPERLESS_URL
               value: http://129.114.27.190
           volumeMounts:
