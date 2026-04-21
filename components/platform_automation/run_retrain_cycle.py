@@ -20,6 +20,7 @@ DEFAULT_OUTPUT_PATH = "/tmp/retrain_decision.json"
 DEFAULT_EVAL_PATH = "/tmp/evaluation_metrics.json"
 DEFAULT_RELEASE_ROOT = "/data/model-releases"
 DEFAULT_PAPERLESS_URL = "http://paperless-ngx.paperless.svc.cluster.local:8000"
+DEFAULT_FEEDBACK_CHECKPOINT_PATH = "/data/feedback_checkpoint.json"
 
 
 def paperless_auth_header() -> str | None:
@@ -69,7 +70,20 @@ def load_feedback_metrics() -> Dict[str, Any]:
 
     feedback_log_path = Path(os.getenv("FEEDBACK_LOG_PATH", "/data/feedback_events.jsonl"))
     if feedback_log_path.exists():
-        lines = [json.loads(line) for line in feedback_log_path.read_text().splitlines() if line.strip()]
+        all_lines = [json.loads(line) for line in feedback_log_path.read_text().splitlines() if line.strip()]
+
+        # Only count events accumulated since the last successful retrain so that
+        # repeated runs don't re-trigger on the same already-trained feedback.
+        checkpoint_path = Path(os.getenv("FEEDBACK_CHECKPOINT_PATH", DEFAULT_FEEDBACK_CHECKPOINT_PATH))
+        last_trained_count = 0
+        if checkpoint_path.exists():
+            try:
+                checkpoint = json.loads(checkpoint_path.read_text())
+                last_trained_count = int(checkpoint.get("last_trained_line_count", 0))
+            except (json.JSONDecodeError, KeyError, ValueError):
+                pass
+
+        lines = all_lines[last_trained_count:]
         feedback_events = len(lines)
         correction_events = sum(
             1 for line in lines if line.get("event") in {"dismiss", "edit", "manual_add"}
@@ -82,6 +96,8 @@ def load_feedback_metrics() -> Dict[str, Any]:
             "correction_rate_7d": correction_rate,
             "wrong_feedback_selections": wrong_feedback_selections,
             "correct_feedback_selections": correct_feedback_selections,
+            "_total_feedback_events": len(all_lines),
+            "_last_trained_line_count": last_trained_count,
         }
 
     return {
@@ -324,6 +340,19 @@ def main() -> int:
             "ner": training_result["package_manifest"]["ner_path"],
             "classifier": training_result["package_manifest"]["classifier_path"],
         }
+
+    if training_result["ok"]:
+        # Advance the checkpoint so the next scheduled run only counts new events.
+        feedback_log_path = Path(os.getenv("FEEDBACK_LOG_PATH", "/data/feedback_events.jsonl"))
+        checkpoint_path = Path(os.getenv("FEEDBACK_CHECKPOINT_PATH", DEFAULT_FEEDBACK_CHECKPOINT_PATH))
+        if feedback_log_path.exists():
+            total_lines = sum(1 for line in feedback_log_path.read_text().splitlines() if line.strip())
+            checkpoint_path.write_text(json.dumps({
+                "last_trained_line_count": total_lines,
+                "last_trained_at": datetime.now(timezone.utc).isoformat(),
+                "candidate_version": decision.get("candidate_version"),
+            }, indent=2))
+
     output_path.write_text(json.dumps(decision, indent=2))
     print(json.dumps(decision, indent=2))
     return 0 if training_result["ok"] else 1

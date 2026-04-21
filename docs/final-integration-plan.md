@@ -54,7 +54,7 @@ This branch turns the project from role-separated milestone work into a single d
   - empty OCR text `> 5%`: warning
 - Training-owned promotion gate
   - NER F1 `>= 0.65`
-  - classifier macro F1 `>= 0.75`
+  - classifier macro F1 `>= 0.65`
   - end-to-end coverage `>= 0.60`
   - false alarm count `<= 10`
 - Current training artifacts

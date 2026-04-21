@@ -30,9 +30,11 @@ spec:
                 - name: MIN_WRONG_FEEDBACK_SELECTIONS
                   value: "50"
                 - name: NER_MODEL_NAME
-                  value: bert_ner_v5
+                  value: bert_ner_v6
                 - name: CLASSIFIER_MODEL_NAME
-                  value: roberta_clf_v5
+                  value: roberta_clf_v6
+                - name: FEEDBACK_CHECKPOINT_PATH
+                  value: /data/feedback_checkpoint.json
                 - name: PAPERLESS_API_URL
                   value: http://paperless-ngx.paperless.svc.cluster.local:8000
                 - name: PAPERLESS_ADMIN_USER
