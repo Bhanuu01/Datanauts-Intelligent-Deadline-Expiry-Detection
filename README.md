@@ -428,14 +428,20 @@ kubectl exec -n ml deploy/online-features -- sh -c 'ls -lah /data && echo --- &&
 
 ### Grafana
 
-Open `Datanauts Overview` in Grafana.
+Open one of these Grafana dashboards:
+
+- `Datanauts Overview`
+- `Datanauts Serving`
+- `Datanauts Data & Feedback`
+- `Datanauts Platform Health`
 
 Useful panels:
 
 - serving targets up
 - ONNX predictions/sec
 - online-features throughput
-- memory utilization
+- feedback/review activity
+- platform and monitoring memory utilization
 
 ### Prometheus
 
@@ -521,7 +527,7 @@ This system depends on local image builds. If the root disk fills up, pods can b
 4. Add `ML Feedback Correct` or `ML Feedback Wrong`.
 5. Show `/data/production_ingest.jsonl` and `/data/feedback_events.jsonl`.
 6. Show retrain/promotion CronJobs and decision files.
-7. Show Grafana `Datanauts Overview`.
+7. Show Grafana `Datanauts Overview` and at least one role-specific dashboard.
 8. Show Prometheus targets or alerts.
 
 ## Source of Truth

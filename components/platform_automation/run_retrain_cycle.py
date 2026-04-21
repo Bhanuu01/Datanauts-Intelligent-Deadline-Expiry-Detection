@@ -21,6 +21,8 @@ DEFAULT_EVAL_PATH = "/tmp/evaluation_metrics.json"
 DEFAULT_RELEASE_ROOT = "/data/model-releases"
 DEFAULT_PAPERLESS_URL = "http://paperless-ngx.paperless.svc.cluster.local:8000"
 DEFAULT_FEEDBACK_CHECKPOINT_PATH = "/data/feedback_checkpoint.json"
+DEFAULT_NER_REGISTERED_MODEL = "deadline-ner"
+DEFAULT_CLASSIFIER_REGISTERED_MODEL = "deadline-classifier"
 
 
 def paperless_auth_header() -> str | None:
@@ -209,6 +211,55 @@ def latest_experiment_metrics(tracking_uri: str, experiment_name: str) -> Dict[s
     }
 
 
+def ensure_registered_model(client: MlflowClient, model_name: str) -> None:
+    try:
+        client.get_registered_model(model_name)
+    except Exception:
+        client.create_registered_model(model_name)
+
+
+def register_candidate_models(
+    tracking_uri: str,
+    candidate_version: str,
+    ner_run_id: str,
+    classifier_run_id: str,
+) -> Dict[str, Any]:
+    client = MlflowClient(tracking_uri=tracking_uri)
+    registry_map = {
+        "ner": {
+            "name": os.getenv("NER_REGISTERED_MODEL_NAME", DEFAULT_NER_REGISTERED_MODEL),
+            "run_id": ner_run_id,
+            "summary": "Candidate NER model from automated retraining cycle.",
+        },
+        "classifier": {
+            "name": os.getenv("CLASSIFIER_REGISTERED_MODEL_NAME", DEFAULT_CLASSIFIER_REGISTERED_MODEL),
+            "run_id": classifier_run_id,
+            "summary": "Candidate classifier model from automated retraining cycle.",
+        },
+    }
+
+    registered_versions: Dict[str, Any] = {}
+    for component, spec in registry_map.items():
+        model_name = spec["name"]
+        ensure_registered_model(client, model_name)
+        version = client.create_model_version(
+            name=model_name,
+            source=f"runs:/{spec['run_id']}/model",
+            run_id=spec["run_id"],
+            description=f"{spec['summary']} Candidate release: {candidate_version}",
+        )
+        client.set_model_version_tag(model_name, version.version, "candidate_version", candidate_version)
+        client.set_model_version_tag(model_name, version.version, "release_channel", "candidate")
+        client.set_model_version_tag(model_name, version.version, "component", component)
+        registered_versions[component] = {
+            "registered_model": model_name,
+            "version": version.version,
+            "run_id": spec["run_id"],
+        }
+
+    return registered_versions
+
+
 def build_evaluation_metrics(package_manifest: Dict[str, Any]) -> Dict[str, Any]:
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.platform.svc.cluster.local:5000")
     training_root = Path(os.getenv("TRAINING_ROOT", "/app/components/training"))
@@ -261,6 +312,12 @@ def build_evaluation_metrics(package_manifest: Dict[str, Any]) -> Dict[str, Any]
                 "classifier": clf_metrics["run_id"],
             },
         }
+    )
+    evaluation_metrics["model_registry"] = register_candidate_models(
+        tracking_uri=tracking_uri,
+        candidate_version=package_manifest["candidate_version"],
+        ner_run_id=ner_metrics["run_id"],
+        classifier_run_id=clf_metrics["run_id"],
     )
     evaluation_path.write_text(json.dumps(evaluation_metrics, indent=2))
     return evaluation_metrics
