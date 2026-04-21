@@ -127,7 +127,6 @@ def build_tags(result: Dict[str, Any]) -> List[str]:
     if deadline_tag:
         tags.append(deadline_tag)
 
-    tags.extend([FEEDBACK_CORRECT_TAG, FEEDBACK_WRONG_TAG])
     return sorted(set(tags))
 
 
@@ -149,9 +148,17 @@ def normalize_deadline_date(raw_date: str) -> str:
 
 def build_deadline_date_tag(result: Dict[str, Any]) -> str | None:
     for event in result.get("events", []):
+        candidates = []
         deadline_date = (event.get("deadline_date") or "").strip()
         if deadline_date:
-            normalized = normalize_deadline_date(deadline_date)
+            candidates.append(deadline_date)
+        for candidate in event.get("date_candidates", []) or []:
+            candidate = (candidate or "").strip()
+            if candidate:
+                candidates.append(candidate)
+
+        for candidate in candidates:
+            normalized = normalize_deadline_date(candidate)
             if normalized:
                 return f"{DEADLINE_TAG_PREFIX}{normalized}"
     return None
@@ -243,6 +250,8 @@ def main() -> int:
             return 0
 
         tag_names = build_tags(result)
+        ensure_tag(FEEDBACK_CORRECT_TAG)
+        ensure_tag(FEEDBACK_WRONG_TAG)
         if tag_names:
             tag_ids = [ensure_tag(name) for name in tag_names]
             patch_document_tags(document_id, document.get("tags", []), tag_ids)
