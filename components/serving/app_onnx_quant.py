@@ -38,7 +38,9 @@ MAX_SENTENCES = int(os.environ.get("ONNX_MAX_SENTENCES", "40"))
 MAX_SENTENCE_CHARS = int(os.environ.get("ONNX_MAX_SENTENCE_CHARS", "512"))
 DATE_RE = re.compile(
     r"\b(?:January|February|March|April|May|June|July|August|"
-    r"September|October|November|December)\s+\d{1,2},?\s+\d{4}"
+    r"September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{1,2},?\s+\d{4}"
+    r"|\b(?:January|February|March|April|May|June|July|August|"
+    r"September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{4}"
     r"|\b\d{1,2}/\d{1,2}/\d{2,4}"
     r"|\b\d{4}-\d{2}-\d{2}",
     re.IGNORECASE,
@@ -124,6 +126,42 @@ def select_candidate_sentences(text: str) -> List[str]:
     return candidates[:MAX_SENTENCES]
 
 
+def normalize_entity_text(value: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (value or "").strip())
+    cleaned = re.sub(r"\s+([,./-])", r"\1", cleaned)
+    cleaned = cleaned.replace("Sept.", "Sep.").replace("sept.", "sep.")
+    return cleaned
+
+
+def is_valid_date_candidate(value: str) -> bool:
+    candidate = normalize_entity_text(value)
+    if not candidate:
+        return False
+    lowered = candidate.lower()
+    if lowered in {"year", "month", "day"}:
+        return False
+    if re.fullmatch(r"\d{1,3}", candidate):
+        return False
+    if re.fullmatch(r"\d{4}", candidate):
+        return False
+    return bool(DATE_RE.search(candidate))
+
+
+def extract_date_candidates(sentence: str, ner_results: List[Dict[str, Any]]) -> List[str]:
+    ner_candidates = []
+    for entity in ner_results:
+        text = normalize_entity_text(str(entity.get("word", "")))
+        if is_valid_date_candidate(text):
+            ner_candidates.append(text)
+
+    if ner_candidates:
+        return list(dict.fromkeys(ner_candidates))
+
+    regex_candidates = [match.group(0).strip(" .,;:") for match in DATE_RE.finditer(sentence)]
+    regex_candidates = [normalize_entity_text(value) for value in regex_candidates if is_valid_date_candidate(value)]
+    return list(dict.fromkeys(regex_candidates))
+
+
 @app.get("/health")
 async def health() -> Dict[str, Any]:
     return {
@@ -155,7 +193,7 @@ async def predict(req: DocumentRequest) -> Dict[str, Any]:
                 continue
 
             ner_results = ner_pipeline(sentence)
-            extracted_dates = [entity["word"] for entity in ner_results]
+            extracted_dates = extract_date_candidates(sentence, ner_results)
             ner_confidence = float(ner_results[0]["score"]) if ner_results else 1.0
             combined_confidence = (top_score + ner_confidence) / 2
             is_uncertain = combined_confidence < CONFIDENCE_THRESHOLD

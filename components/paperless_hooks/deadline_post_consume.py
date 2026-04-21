@@ -136,6 +136,13 @@ def normalize_deadline_date(raw_date: str) -> str:
     cleaned = raw_date.strip()
     if not cleaned:
         return ""
+    lowered = cleaned.lower()
+    if lowered in {"year", "month", "day"}:
+        return ""
+    if re.fullmatch(r"\d{1,3}", cleaned):
+        return ""
+    if re.fullmatch(r"\d{4}", cleaned):
+        return ""
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", cleaned):
         return cleaned
     for fmt in ("%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
