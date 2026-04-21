@@ -75,8 +75,8 @@ def load_feedback_metrics() -> Dict[str, Any]:
             1 for line in lines if line.get("event") in {"dismiss", "edit", "manual_add"}
         )
         correction_rate = (correction_events / feedback_events) if feedback_events else 0.0
-        wrong_feedback_selections = fetch_paperless_tag_count("ml:feedback:wrong")
-        correct_feedback_selections = fetch_paperless_tag_count("ml:feedback:correct")
+        wrong_feedback_selections = fetch_paperless_tag_count("ML Feedback Wrong")
+        correct_feedback_selections = fetch_paperless_tag_count("ML Feedback Correct")
         return {
             "new_feedback_events": feedback_events,
             "correction_rate_7d": correction_rate,

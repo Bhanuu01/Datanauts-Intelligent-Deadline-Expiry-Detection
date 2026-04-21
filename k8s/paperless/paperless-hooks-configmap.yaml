@@ -31,10 +31,12 @@ data:
     RESULTS_DIR = Path(os.getenv("DEADLINE_RESULTS_DIR", "/usr/src/paperless/data/deadline-results"))
     ASYNC_CHILD_ENV = "DEADLINE_POST_CONSUME_ASYNC_CHILD"
     ASYNC_ENABLED = os.getenv("DEADLINE_POST_CONSUME_ASYNC", "true").lower() in {"1", "true", "yes"}
-    DEADLINE_TAG_PREFIX = "ml:deadline-date:"
-    REVIEW_PENDING_TAG = "ml:review:pending"
-    FEEDBACK_CORRECT_TAG = "ml:feedback:correct"
-    FEEDBACK_WRONG_TAG = "ml:feedback:wrong"
+    DEADLINE_TAG_PREFIX = "ML Deadline Date: "
+    REVIEW_PENDING_TAG = "ML Review Pending"
+    FEEDBACK_CORRECT_TAG = "ML Feedback Correct"
+    FEEDBACK_WRONG_TAG = "ML Feedback Wrong"
+    DEADLINE_DETECTED_TAG = "ML Deadline Detected"
+    REVIEW_NEEDED_TAG = "ML Review Needed"
 
     def basic_auth_header() -> str:
         import base64
@@ -137,14 +139,14 @@ data:
     def build_tags(result: Dict[str, Any]) -> List[str]:
         tags = []
         if result.get("has_deadline"):
-            tags.append("ml:deadline-detected")
+            tags.append(DEADLINE_DETECTED_TAG)
             tags.append(REVIEW_PENDING_TAG)
         if result.get("uncertain"):
-            tags.append("ml:deadline-review-needed")
+            tags.append(REVIEW_NEEDED_TAG)
             tags.append(REVIEW_PENDING_TAG)
         for event in result.get("events", []):
             event_type = event.get("event_type", "unknown")
-            tags.append(f"ml:event:{event_type}")
+            tags.append(f"ML Event: {str(event_type).replace('_', ' ').title()}")
 
         deadline_tag = build_deadline_date_tag(result)
         if deadline_tag:
