@@ -111,6 +111,8 @@ def post_feedback(payload: Dict[str, Any]) -> None:
 
 def build_tags(result: Dict[str, Any]) -> List[str]:
     tags = []
+    if result.get("has_deadline"):
+        tags.append("Type:Deadline")
     if result.get("uncertain"):
         tags.append(STATUS_REVIEW_TAG)
 
