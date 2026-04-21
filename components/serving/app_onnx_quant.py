@@ -1,12 +1,14 @@
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from optimum.onnxruntime import ORTModelForSequenceClassification
 from optimum.onnxruntime import ORTModelForTokenClassification
 from prometheus_client import Counter
@@ -32,6 +34,19 @@ if "ONNX_MODEL_PATH" in os.environ:
 
 FEEDBACK_LOG_PATH = Path(os.environ.get("FEEDBACK_LOG_PATH", "/data/serving_feedback.jsonl"))
 CONFIDENCE_THRESHOLD = float(os.environ.get("ONNX_CONFIDENCE_THRESHOLD", "0.7"))
+MAX_SENTENCES = int(os.environ.get("ONNX_MAX_SENTENCES", "40"))
+MAX_SENTENCE_CHARS = int(os.environ.get("ONNX_MAX_SENTENCE_CHARS", "512"))
+DATE_RE = re.compile(
+    r"\b(?:January|February|March|April|May|June|July|August|"
+    r"September|October|November|December)\s+\d{1,2},?\s+\d{4}"
+    r"|\b\d{1,2}/\d{1,2}/\d{2,4}"
+    r"|\b\d{4}-\d{2}-\d{2}",
+    re.IGNORECASE,
+)
+KEYWORD_RE = re.compile(
+    r"\b(effective|renew|renewal|expire|expiration|terminate|termination|notice|agreement|due)\b",
+    re.IGNORECASE,
+)
 
 app = FastAPI(title="Deadline Detection ONNX Quantized Service")
 Instrumentator().instrument(app).expose(app)
@@ -52,6 +67,15 @@ UNCERTAIN_COUNTER = Counter(
 CORRECTION_COUNTER = Counter(
     "deadline_onnx_user_corrections_total",
     "Total user corrections received by the ONNX serving path.",
+)
+FAILURE_COUNTER = Counter(
+    "deadline_onnx_failures_total",
+    "Total ONNX serving failures while processing prediction requests.",
+)
+LATENCY_METRIC = Histogram(
+    "deadline_onnx_inference_latency_seconds",
+    "Latency of ONNX prediction requests.",
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
 )
 
 clf_model = ORTModelForSequenceClassification.from_pretrained(str(CLF_MODEL_PATH))
@@ -81,6 +105,25 @@ def split_into_sentences(text: str) -> List[str]:
     return [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", text) if sentence.strip()]
 
 
+def select_candidate_sentences(text: str) -> List[str]:
+    sentences = split_into_sentences(text)
+    prioritized: List[str] = []
+    fallback: List[str] = []
+
+    for sentence in sentences:
+        normalized = " ".join(sentence.split())
+        if not normalized:
+            continue
+        clipped = normalized[:MAX_SENTENCE_CHARS]
+        if DATE_RE.search(normalized) or KEYWORD_RE.search(normalized):
+            prioritized.append(clipped)
+        else:
+            fallback.append(clipped)
+
+    candidates = prioritized or fallback
+    return candidates[:MAX_SENTENCES]
+
+
 @app.get("/health")
 async def health() -> Dict[str, Any]:
     return {
@@ -94,54 +137,62 @@ async def health() -> Dict[str, Any]:
 
 @app.post("/predict")
 async def predict(req: DocumentRequest) -> Dict[str, Any]:
+    started = time.perf_counter()
     PREDICTION_COUNTER.inc()
-    sentences = split_into_sentences(req.ocr_text)
+    try:
+        sentences = select_candidate_sentences(req.ocr_text)
 
-    events: List[Dict[str, Any]] = []
-    has_conflict = False
+        events: List[Dict[str, Any]] = []
+        has_conflict = False
 
-    for sentence in sentences:
-        clf_results = clf_pipeline(sentence)[0]
-        class_scores = {entry["label"]: float(entry["score"]) for entry in clf_results}
-        top_class = max(class_scores, key=class_scores.get)
-        top_score = class_scores[top_class]
+        for sentence in sentences:
+            clf_results = clf_pipeline(sentence)[0]
+            class_scores = {entry["label"]: float(entry["score"]) for entry in clf_results}
+            top_class = max(class_scores, key=class_scores.get)
+            top_score = class_scores[top_class]
 
-        if top_class == "none":
-            continue
+            if top_class == "none":
+                continue
 
-        ner_results = ner_pipeline(sentence)
-        extracted_dates = [entity["word"] for entity in ner_results]
-        ner_confidence = float(ner_results[0]["score"]) if ner_results else 1.0
-        combined_confidence = (top_score + ner_confidence) / 2
-        is_uncertain = combined_confidence < CONFIDENCE_THRESHOLD
+            ner_results = ner_pipeline(sentence)
+            extracted_dates = [entity["word"] for entity in ner_results]
+            ner_confidence = float(ner_results[0]["score"]) if ner_results else 1.0
+            combined_confidence = (top_score + ner_confidence) / 2
+            is_uncertain = combined_confidence < CONFIDENCE_THRESHOLD
 
-        CONFIDENCE_METRIC.observe(combined_confidence)
-        if is_uncertain:
-            UNCERTAIN_COUNTER.inc()
+            CONFIDENCE_METRIC.observe(combined_confidence)
+            if is_uncertain:
+                UNCERTAIN_COUNTER.inc()
 
-        events.append(
-            {
-                "event_type": top_class,
-                "deadline_date": extracted_dates[0] if extracted_dates else None,
-                "date_candidates": extracted_dates,
-                "conflict_flag": len(extracted_dates) > 1,
-                "confidence": round(combined_confidence, 4),
-                "uncertain": is_uncertain,
-                "source_sentence": sentence,
-                "class_scores": class_scores,
-            }
-        )
-        if len(extracted_dates) > 1:
-            has_conflict = True
+            events.append(
+                {
+                    "event_type": top_class,
+                    "deadline_date": extracted_dates[0] if extracted_dates else None,
+                    "date_candidates": extracted_dates,
+                    "conflict_flag": len(extracted_dates) > 1,
+                    "confidence": round(combined_confidence, 4),
+                    "uncertain": is_uncertain,
+                    "source_sentence": sentence,
+                    "class_scores": class_scores,
+                }
+            )
+            if len(extracted_dates) > 1:
+                has_conflict = True
 
-    return {
-        "contract_id": req.document_id,
-        "has_deadline": len(events) > 0,
-        "uncertain": any(event["uncertain"] for event in events),
-        "multi_date_conflict": has_conflict,
-        "events": events,
-        "mode": "onnx_quantized_two_stage",
-    }
+        return {
+            "contract_id": req.document_id,
+            "has_deadline": len(events) > 0,
+            "uncertain": any(event["uncertain"] for event in events),
+            "multi_date_conflict": has_conflict,
+            "events": events,
+            "mode": "onnx_quantized_two_stage",
+            "candidate_sentences": len(sentences),
+        }
+    except Exception as exc:
+        FAILURE_COUNTER.inc()
+        raise HTTPException(status_code=500, detail=f"onnx serving failed: {exc}") from exc
+    finally:
+        LATENCY_METRIC.observe(time.perf_counter() - started)
 
 
 @app.post("/feedback")

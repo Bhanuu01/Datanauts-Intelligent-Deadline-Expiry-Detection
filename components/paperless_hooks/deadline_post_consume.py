@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -21,6 +22,8 @@ FEEDBACK_URL = os.getenv(
     "http://online-features.ml.svc.cluster.local:8000/feedback",
 )
 RESULTS_DIR = Path(os.getenv("DEADLINE_RESULTS_DIR", "/usr/src/paperless/data/deadline-results"))
+ASYNC_CHILD_ENV = "DEADLINE_POST_CONSUME_ASYNC_CHILD"
+ASYNC_ENABLED = os.getenv("DEADLINE_POST_CONSUME_ASYNC", "true").lower() in {"1", "true", "yes"}
 
 
 def basic_auth_header() -> str:
@@ -146,9 +149,30 @@ def record_feedback_events(document_id: int, result: Dict[str, Any]) -> None:
             )
 
 
+def spawn_async_worker(document_id: int) -> None:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = RESULTS_DIR / f"{document_id}.hook.log"
+    env = os.environ.copy()
+    env[ASYNC_CHILD_ENV] = "1"
+    with log_path.open("a", encoding="utf-8") as handle:
+        subprocess.Popen(
+            [sys.executable, __file__],
+            env=env,
+            stdout=handle,
+            stderr=handle,
+            start_new_session=True,
+            close_fds=True,
+        )
+
+
 def main() -> int:
     document_id = int(os.environ["DOCUMENT_ID"])
     try:
+        if ASYNC_ENABLED and os.getenv(ASYNC_CHILD_ENV) != "1":
+            spawn_async_worker(document_id)
+            print(f"Queued asynchronous deadline inference for document {document_id}.")
+            return 0
+
         document = get_document(document_id)
         content = (document.get("content") or "").strip()
         if not content:

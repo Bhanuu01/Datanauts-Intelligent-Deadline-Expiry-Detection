@@ -34,6 +34,10 @@ spec:
               value: /models/onnx_quantized_model/onnx_quantized_ner
             - name: ONNX_CONFIDENCE_THRESHOLD
               value: "0.7"
+            - name: ONNX_MAX_SENTENCES
+              value: "40"
+            - name: ONNX_MAX_SENTENCE_CHARS
+              value: "512"
             - name: FEEDBACK_LOG_PATH
               value: /models/serving_feedback_staging.jsonl
             - name: RELEASE_CHANNEL

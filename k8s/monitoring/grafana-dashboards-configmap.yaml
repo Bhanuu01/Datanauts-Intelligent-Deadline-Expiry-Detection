@@ -371,15 +371,15 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(rate(deadline_onnx_uncertain_predictions_total[5m])) or vector(0)",
-              "legendFormat": "onnx uncertain",
+              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total[15m])) or vector(0)",
+              "legendFormat": "onnx uncertain (15m)",
               "range": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
-              "expr": "sum(rate(deadline_onnx_user_corrections_total[5m])) or vector(0)",
-              "legendFormat": "user corrections",
+              "expr": "sum(increase(deadline_onnx_user_corrections_total[15m])) or vector(0)",
+              "legendFormat": "user corrections (15m)",
               "range": true,
               "refId": "B"
             }
@@ -397,7 +397,7 @@ data:
               "color": {
                 "mode": "palette-classic"
               },
-              "unit": "percentunit"
+              "unit": "s"
             },
             "overrides": []
           },
@@ -422,13 +422,13 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_confidence_score_bucket[5m]))) or vector(0)",
-              "legendFormat": "p95 confidence",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_inference_latency_seconds_bucket[5m]))) or vector(0)",
+              "legendFormat": "p95 latency",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "ONNX P95 Confidence",
+          "title": "ONNX P95 Latency",
           "type": "timeseries"
         },
         {
@@ -535,6 +535,13 @@ data:
               "legendFormat": "corrections (15m)",
               "range": true,
               "refId": "C"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(increase(deadline_onnx_failures_total[15m])) or vector(0)",
+              "legendFormat": "failures (15m)",
+              "range": true,
+              "refId": "D"
             }
           ],
           "title": "ONNX Outcome Volume",
