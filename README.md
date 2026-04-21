@@ -47,6 +47,7 @@ The dataset was updated based on feedback:
 ## Implementation Timeline
 
 ### Initial Implementation (Apr 6) that is re-implementated with updated dataset
+- Q2.1: High-level data design document uploaded as `high_level_data_design_tt2884.pdf` — updated for v2 dataset and cuad-data-proj11-v2 bucket
 - Q2.2: Created Chameleon object storage bucket with CUAD dataset files
 - Q2.3: Built Docker ingestion pipeline fetching from HuggingFace
 - Q2.4: Built data generator simulating contract upload events
