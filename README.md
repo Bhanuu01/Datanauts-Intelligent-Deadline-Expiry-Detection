@@ -5,7 +5,7 @@
 
 ## Overview
 
-This branch contains the complete data team implementation for the Intelligent Deadline & Expiry Detection system built on Paperless-ngx. It includes all work from Initial Implementation (Apr 6), re-implementation with the updated dataset, and Final System Implementation (Apr 20).
+This branch contains the complete data team implementation for the Intelligent Deadline & Expiry Detection system built on Paperless-ngx. It includes all work from Initial Implementation (Apr 6) that is re-implemented with the updated dataset and Final System Implementation (Apr 20).
 
 ---
 
@@ -17,7 +17,7 @@ This branch contains the complete data team implementation for the Intelligent D
 
 ### What Changed from v1 to v2
 
-The dataset was updated based on feedback and training team requirements:
+The dataset was updated based on feedback:
 
 - **6 event types** (up from 4): `none`, `expiration`, `effective`, `renewal`, `agreement`, `notice_period`
 - **No synthetic data** — only real CUAD contracts (510 contracts total)
@@ -26,7 +26,6 @@ The dataset was updated based on feedback and training team requirements:
   - 2005–2010 → validation (68 records)
   - 2011+ → test (69 records)
 - **Leakage prevention**: All clauses from one contract always go to the same split. No clause from a post-2010 contract appears in train. This prevents the model from being evaluated on contracts it has effectively seen during training.
-- **generator.py updated** to match new 6 event types as required by the training team
 
 ---
 
@@ -47,19 +46,18 @@ The dataset was updated based on feedback and training team requirements:
 
 ## Implementation Timeline
 
-### Initial Implementation (Apr 6)
+### Initial Implementation (Apr 6) that is re-implementated with updated dataset
 - Q2.2: Created Chameleon object storage bucket with CUAD dataset files
 - Q2.3: Built Docker ingestion pipeline fetching from HuggingFace
 - Q2.4: Built data generator simulating contract upload events
 - Q2.5: Built FastAPI + Redis online feature service
 - Q2.6: Built batch pipeline with versioned dataset outputs
 
-### Re-implementation with Updated Dataset (Apr 20)
-All components were re-implemented with the new v2 dataset:
+
+All of the above components were re-implemented with the new v2 dataset:
 - New container `cuad-data-proj11-v2` created with updated files
 - Pipeline updated to handle parquet → JSONL conversion
 - Batch pipeline updated to use v2 column names (`Filename`, `ocr_text`, `agreement_date_iso`)
-- generator.py updated to support all 6 event types
 - Time-based contract-level split implemented for leakage prevention
 
 ### Final System Implementation (Apr 20)
