@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -24,12 +25,16 @@ FEEDBACK_URL = os.getenv(
 RESULTS_DIR = Path(os.getenv("DEADLINE_RESULTS_DIR", "/usr/src/paperless/data/deadline-results"))
 ASYNC_CHILD_ENV = "DEADLINE_POST_CONSUME_ASYNC_CHILD"
 ASYNC_ENABLED = os.getenv("DEADLINE_POST_CONSUME_ASYNC", "true").lower() in {"1", "true", "yes"}
+DEADLINE_TAG_PREFIX = "ml:deadline-date:"
+REVIEW_PENDING_TAG = "ml:review:pending"
+FEEDBACK_CORRECT_TAG = "ml:feedback:correct"
+FEEDBACK_WRONG_TAG = "ml:feedback:wrong"
 
 
 def basic_auth_header() -> str:
     import base64
 
-    username = os.environ["PAPERLESS_ADMIN_USER"]
+    username = os.getenv("PAPERLESS_ADMIN_USER", "admin")
     password = os.environ["PAPERLESS_ADMIN_PASSWORD"]
     token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
     return f"Basic {token}"
@@ -109,14 +114,47 @@ def build_tags(result: Dict[str, Any]) -> List[str]:
     tags = []
     if result.get("has_deadline"):
         tags.append("ml:deadline-detected")
+        tags.append(REVIEW_PENDING_TAG)
     if result.get("uncertain"):
         tags.append("ml:deadline-review-needed")
+        tags.append(REVIEW_PENDING_TAG)
 
     for event in result.get("events", []):
         event_type = event.get("event_type", "unknown")
         tags.append(f"ml:event:{event_type}")
 
+    deadline_tag = build_deadline_date_tag(result)
+    if deadline_tag:
+        tags.append(deadline_tag)
+
+    tags.extend([FEEDBACK_CORRECT_TAG, FEEDBACK_WRONG_TAG])
     return sorted(set(tags))
+
+
+def normalize_deadline_date(raw_date: str) -> str:
+    cleaned = raw_date.strip()
+    if not cleaned:
+        return ""
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", cleaned):
+        return cleaned
+    for fmt in ("%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
+        try:
+            from datetime import datetime
+
+            return datetime.strptime(cleaned, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return re.sub(r"[^0-9A-Za-z_-]+", "-", cleaned).strip("-")
+
+
+def build_deadline_date_tag(result: Dict[str, Any]) -> str | None:
+    for event in result.get("events", []):
+        deadline_date = (event.get("deadline_date") or "").strip()
+        if deadline_date:
+            normalized = normalize_deadline_date(deadline_date)
+            if normalized:
+                return f"{DEADLINE_TAG_PREFIX}{normalized}"
+    return None
 
 
 def persist_result(document_id: int, result: Dict[str, Any]) -> None:
@@ -154,6 +192,7 @@ def spawn_async_worker(document_id: int) -> None:
     log_path = RESULTS_DIR / f"{document_id}.hook.log"
     env = os.environ.copy()
     env[ASYNC_CHILD_ENV] = "1"
+    env["DOCUMENT_ID"] = str(document_id)
     with log_path.open("a", encoding="utf-8") as handle:
         subprocess.Popen(
             [sys.executable, __file__],
@@ -165,8 +204,16 @@ def spawn_async_worker(document_id: int) -> None:
         )
 
 
+def resolve_document_id() -> int:
+    if os.getenv("DOCUMENT_ID"):
+        return int(os.environ["DOCUMENT_ID"])
+    if len(sys.argv) > 1 and sys.argv[1].isdigit():
+        return int(sys.argv[1])
+    raise KeyError("DOCUMENT_ID")
+
+
 def main() -> int:
-    document_id = int(os.environ["DOCUMENT_ID"])
+    document_id = resolve_document_id()
     try:
         if ASYNC_ENABLED and os.getenv(ASYNC_CHILD_ENV) != "1":
             spawn_async_worker(document_id)

@@ -14,6 +14,14 @@ kubectl create secret generic paperless-secrets \
   --namespace=paperless \
   --from-literal=POSTGRES_PASSWORD="${PAPERLESS_DB_PASSWORD}" \
   --from-literal=PAPERLESS_SECRET_KEY="${PAPERLESS_SECRET_KEY}" \
+  --from-literal=PAPERLESS_ADMIN_USER="admin" \
+  --from-literal=PAPERLESS_ADMIN_PASSWORD="${PAPERLESS_ADMIN_PASSWORD}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# Mirror Paperless API credentials into ml so automation jobs can read UI review tags
+kubectl create secret generic paperless-secrets \
+  --namespace=ml \
+  --from-literal=PAPERLESS_ADMIN_USER="admin" \
   --from-literal=PAPERLESS_ADMIN_PASSWORD="${PAPERLESS_ADMIN_PASSWORD}" \
   --dry-run=client -o yaml | kubectl apply -f -
 

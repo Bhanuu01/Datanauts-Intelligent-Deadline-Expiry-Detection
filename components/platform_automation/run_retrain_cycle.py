@@ -3,6 +3,8 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -17,6 +19,47 @@ DEFAULT_METRICS_PATH = "/tmp/feedback_metrics.json"
 DEFAULT_OUTPUT_PATH = "/tmp/retrain_decision.json"
 DEFAULT_EVAL_PATH = "/tmp/evaluation_metrics.json"
 DEFAULT_RELEASE_ROOT = "/data/model-releases"
+DEFAULT_PAPERLESS_URL = "http://paperless-ngx.paperless.svc.cluster.local:8000"
+
+
+def paperless_auth_header() -> str | None:
+    password = os.getenv("PAPERLESS_ADMIN_PASSWORD")
+    if not password:
+        return None
+
+    import base64
+
+    username = os.getenv("PAPERLESS_ADMIN_USER", "admin")
+    token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    return f"Basic {token}"
+
+
+def paperless_request_json(url: str) -> Dict[str, Any]:
+    headers = {"Accept": "application/json"}
+    auth_header = paperless_auth_header()
+    if auth_header:
+        headers["Authorization"] = auth_header
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_paperless_tag_count(tag_name: str) -> int:
+    auth_header = paperless_auth_header()
+    if not auth_header:
+        return 0
+
+    paperless_url = os.getenv("PAPERLESS_API_URL", DEFAULT_PAPERLESS_URL)
+    query = urllib.parse.urlencode({"name__iexact": tag_name, "page_size": 1})
+    tag_response = paperless_request_json(f"{paperless_url}/api/tags/?{query}")
+    tag_results = tag_response.get("results", [])
+    if not tag_results:
+        return 0
+
+    tag_id = tag_results[0]["id"]
+    document_query = urllib.parse.urlencode({"tags__id__all": tag_id, "page_size": 1})
+    document_response = paperless_request_json(f"{paperless_url}/api/documents/?{document_query}")
+    return int(document_response.get("count", 0))
 
 
 def load_feedback_metrics() -> Dict[str, Any]:
@@ -32,29 +75,40 @@ def load_feedback_metrics() -> Dict[str, Any]:
             1 for line in lines if line.get("event") in {"dismiss", "edit", "manual_add"}
         )
         correction_rate = (correction_events / feedback_events) if feedback_events else 0.0
+        wrong_feedback_selections = fetch_paperless_tag_count("ml:feedback:wrong")
+        correct_feedback_selections = fetch_paperless_tag_count("ml:feedback:correct")
         return {
             "new_feedback_events": feedback_events,
             "correction_rate_7d": correction_rate,
+            "wrong_feedback_selections": wrong_feedback_selections,
+            "correct_feedback_selections": correct_feedback_selections,
         }
 
     return {
         "new_feedback_events": int(os.getenv("NEW_FEEDBACK_EVENTS", "0")),
         "correction_rate_7d": float(os.getenv("CORRECTION_RATE_7D", "0.0")),
+        "wrong_feedback_selections": int(os.getenv("WRONG_FEEDBACK_SELECTIONS", "0")),
+        "correct_feedback_selections": int(os.getenv("CORRECT_FEEDBACK_SELECTIONS", "0")),
     }
 
 
 def should_retrain(metrics: Dict[str, Any]) -> Dict[str, Any]:
     min_feedback = int(os.getenv("MIN_FEEDBACK_EVENTS", "500"))
     max_correction_rate = float(os.getenv("MAX_CORRECTION_RATE", "0.15"))
+    min_wrong_feedback = int(os.getenv("MIN_WRONG_FEEDBACK_SELECTIONS", "50"))
 
     feedback_count = int(metrics.get("new_feedback_events", 0))
     correction_rate = float(metrics.get("correction_rate_7d", 0.0))
+    wrong_feedback = int(metrics.get("wrong_feedback_selections", 0))
+    correct_feedback = int(metrics.get("correct_feedback_selections", 0))
 
     reasons: List[str] = []
     if feedback_count >= min_feedback:
         reasons.append("feedback_volume")
     if correction_rate >= max_correction_rate:
         reasons.append("correction_rate")
+    if wrong_feedback >= min_wrong_feedback:
+        reasons.append("wrong_feedback_selections")
 
     return {
         "trigger_retrain": bool(reasons),
@@ -62,10 +116,13 @@ def should_retrain(metrics: Dict[str, Any]) -> Dict[str, Any]:
         "metrics": {
             "new_feedback_events": feedback_count,
             "correction_rate_7d": correction_rate,
+            "wrong_feedback_selections": wrong_feedback,
+            "correct_feedback_selections": correct_feedback,
         },
         "thresholds": {
             "min_feedback_events": min_feedback,
             "max_correction_rate": max_correction_rate,
+            "min_wrong_feedback_selections": min_wrong_feedback,
         },
     }
 

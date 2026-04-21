@@ -8,12 +8,16 @@ data:
     #!/usr/bin/env python3
     import json
     import os
+    import re
     import subprocess
     import sys
     import urllib.error
     import urllib.parse
     import urllib.request
     from pathlib import Path
+    from typing import Any
+    from typing import Dict
+    from typing import List
 
     PAPERLESS_URL = os.getenv("PAPERLESS_INTERNAL_URL", "http://127.0.0.1:8000")
     INFERENCE_URL = os.getenv(
@@ -27,15 +31,20 @@ data:
     RESULTS_DIR = Path(os.getenv("DEADLINE_RESULTS_DIR", "/usr/src/paperless/data/deadline-results"))
     ASYNC_CHILD_ENV = "DEADLINE_POST_CONSUME_ASYNC_CHILD"
     ASYNC_ENABLED = os.getenv("DEADLINE_POST_CONSUME_ASYNC", "true").lower() in {"1", "true", "yes"}
+    DEADLINE_TAG_PREFIX = "ml:deadline-date:"
+    REVIEW_PENDING_TAG = "ml:review:pending"
+    FEEDBACK_CORRECT_TAG = "ml:feedback:correct"
+    FEEDBACK_WRONG_TAG = "ml:feedback:wrong"
 
-    def basic_auth_header():
+    def basic_auth_header() -> str:
         import base64
-        username = os.environ["PAPERLESS_ADMIN_USER"]
+
+        username = os.getenv("PAPERLESS_ADMIN_USER", "admin")
         password = os.environ["PAPERLESS_ADMIN_PASSWORD"]
         token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
         return f"Basic {token}"
 
-    def request_json(method, url, payload=None):
+    def request_json(method: str, url: str, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
         data = None
         headers = {"Authorization": basic_auth_header(), "Accept": "application/json"}
         if payload is not None:
@@ -45,27 +54,27 @@ data:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def get_document(document_id):
+    def get_document(document_id: int) -> Dict[str, Any]:
         return request_json("GET", f"{PAPERLESS_URL}/api/documents/{document_id}/")
 
-    def find_tag_id(name):
+    def find_tag_id(name: str) -> int | None:
         query = urllib.parse.urlencode({"name__iexact": name, "page_size": 1})
         response = request_json("GET", f"{PAPERLESS_URL}/api/tags/?{query}")
         results = response.get("results", [])
         return results[0]["id"] if results else None
 
-    def ensure_tag(name):
+    def ensure_tag(name: str) -> int:
         existing = find_tag_id(name)
         if existing is not None:
             return existing
         created = request_json("POST", f"{PAPERLESS_URL}/api/tags/", {"name": name})
         return int(created["id"])
 
-    def patch_document_tags(document_id, existing_tags, extra_tag_ids):
+    def patch_document_tags(document_id: int, existing_tags: List[int], extra_tag_ids: List[int]) -> None:
         merged_tags = sorted(set(existing_tags + extra_tag_ids))
         request_json("PATCH", f"{PAPERLESS_URL}/api/documents/{document_id}/", {"tags": merged_tags})
 
-    def call_inference(document_id, content, document_type, filename):
+    def call_inference(document_id: int, content: str, document_type: str | None, filename: str | None) -> Dict[str, Any]:
         payload = {
             "document_id": str(document_id),
             "ocr_text": content,
@@ -82,7 +91,7 @@ data:
         with urllib.request.urlopen(request, timeout=float(os.getenv("INFERENCE_TIMEOUT_SECONDS", "20"))) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def post_feedback(payload):
+    def post_feedback(payload: Dict[str, Any]) -> None:
         data = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             FEEDBACK_URL,
@@ -93,22 +102,54 @@ data:
         with urllib.request.urlopen(request, timeout=15):
             return
 
-    def build_tags(result):
+    def normalize_deadline_date(raw_date: str) -> str:
+        cleaned = raw_date.strip()
+        if not cleaned:
+            return ""
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", cleaned):
+            return cleaned
+        for fmt in ("%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
+            try:
+                from datetime import datetime
+
+                return datetime.strptime(cleaned, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+        return re.sub(r"[^0-9A-Za-z_-]+", "-", cleaned).strip("-")
+
+    def build_deadline_date_tag(result: Dict[str, Any]) -> str | None:
+        for event in result.get("events", []):
+            deadline_date = (event.get("deadline_date") or "").strip()
+            if deadline_date:
+                normalized = normalize_deadline_date(deadline_date)
+                if normalized:
+                    return f"{DEADLINE_TAG_PREFIX}{normalized}"
+        return None
+
+    def build_tags(result: Dict[str, Any]) -> List[str]:
         tags = []
         if result.get("has_deadline"):
             tags.append("ml:deadline-detected")
+            tags.append(REVIEW_PENDING_TAG)
         if result.get("uncertain"):
             tags.append("ml:deadline-review-needed")
+            tags.append(REVIEW_PENDING_TAG)
         for event in result.get("events", []):
             event_type = event.get("event_type", "unknown")
             tags.append(f"ml:event:{event_type}")
+
+        deadline_tag = build_deadline_date_tag(result)
+        if deadline_tag:
+            tags.append(deadline_tag)
+
+        tags.extend([FEEDBACK_CORRECT_TAG, FEEDBACK_WRONG_TAG])
         return sorted(set(tags))
 
-    def persist_result(document_id, result):
+    def persist_result(document_id: int, result: Dict[str, Any]) -> None:
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         (RESULTS_DIR / f"{document_id}.json").write_text(json.dumps(result, indent=2))
 
-    def record_feedback_events(document_id, result):
+    def record_feedback_events(document_id: int, result: Dict[str, Any]) -> None:
         event_name = "review_required" if result.get("uncertain") else (
             "auto_tagged" if result.get("has_deadline") else "no_deadline"
         )
@@ -117,25 +158,26 @@ data:
         for event_type in event_types:
             try:
                 post_feedback(
-                {
-                    "event": event_name,
-                    "document_id": str(document_id),
-                    "event_type": event_type,
-                    "confidence": confidence,
-                    "notes": f"paperless_hook:{result.get('mode', 'unknown')}",
-                }
-            )
-        except Exception as exc:
-            print(
-                f"Feedback capture failed for document {document_id} ({event_type}): {exc}",
-                file=sys.stderr,
-            )
+                    {
+                        "event": event_name,
+                        "document_id": str(document_id),
+                        "event_type": event_type,
+                        "confidence": confidence,
+                        "notes": f"paperless_hook:{result.get('mode', 'unknown')}",
+                    }
+                )
+            except Exception as exc:
+                print(
+                    f"Feedback capture failed for document {document_id} ({event_type}): {exc}",
+                    file=sys.stderr,
+                )
 
-    def spawn_async_worker(document_id):
+    def spawn_async_worker(document_id: int) -> None:
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         log_path = RESULTS_DIR / f"{document_id}.hook.log"
         env = os.environ.copy()
         env[ASYNC_CHILD_ENV] = "1"
+        env["DOCUMENT_ID"] = str(document_id)
         with log_path.open("a", encoding="utf-8") as handle:
             subprocess.Popen(
                 [sys.executable, __file__],
@@ -146,48 +188,59 @@ data:
                 close_fds=True,
             )
 
-    def main():
-        document_id = int(os.environ["DOCUMENT_ID"])
-        if ASYNC_ENABLED and os.getenv(ASYNC_CHILD_ENV) != "1":
-            spawn_async_worker(document_id)
-            print(f"Queued asynchronous deadline inference for document {document_id}.")
-            return 0
-        document = get_document(document_id)
-        content = (document.get("content") or "").strip()
-        if not content:
-            print(f"No OCR content available for document {document_id}; skipping inference.")
-            return 0
-        try:
-            result = call_inference(
-                document_id=document_id,
-                content=content,
-                document_type=document.get("document_type"),
-                filename=document.get("original_file_name") or document.get("archived_file_name"),
-            )
-            persist_result(document_id, result)
-            record_feedback_events(document_id, result)
-        except Exception as exc:
-            print(
-                f"Skipping deadline inference for document {document_id} after non-fatal error: {exc}",
-                file=sys.stderr,
-            )
-            return 0
-        tag_names = build_tags(result)
-        if tag_names:
-            tag_ids = [ensure_tag(name) for name in tag_names]
-            patch_document_tags(document_id, document.get("tags", []), tag_ids)
-            print(f"Updated document {document_id} with tags: {', '.join(tag_names)}")
-        else:
-            print(f"No deadline tags added for document {document_id}.")
-        return 0
+    def resolve_document_id() -> int:
+        if os.getenv("DOCUMENT_ID"):
+            return int(os.environ["DOCUMENT_ID"])
+        if len(sys.argv) > 1 and sys.argv[1].isdigit():
+            return int(sys.argv[1])
+        raise KeyError("DOCUMENT_ID")
 
-    if __name__ == "__main__":
+    def main() -> int:
+        document_id = resolve_document_id()
         try:
-            sys.exit(main())
+            if ASYNC_ENABLED and os.getenv(ASYNC_CHILD_ENV) != "1":
+                spawn_async_worker(document_id)
+                print(f"Queued asynchronous deadline inference for document {document_id}.")
+                return 0
+
+            document = get_document(document_id)
+            content = (document.get("content") or "").strip()
+            if not content:
+                print(f"No OCR content available for document {document_id}; skipping inference.")
+                return 0
+
+            try:
+                result = call_inference(
+                    document_id=document_id,
+                    content=content,
+                    document_type=document.get("document_type"),
+                    filename=document.get("original_file_name") or document.get("archived_file_name"),
+                )
+                persist_result(document_id, result)
+                record_feedback_events(document_id, result)
+            except Exception as exc:
+                print(
+                    f"Skipping deadline inference for document {document_id} after non-fatal error: {exc}",
+                    file=sys.stderr,
+                )
+                return 0
+
+            tag_names = build_tags(result)
+            if tag_names:
+                tag_ids = [ensure_tag(name) for name in tag_names]
+                patch_document_tags(document_id, document.get("tags", []), tag_ids)
+                print(f"Updated document {document_id} with tags: {', '.join(tag_names)}")
+            else:
+                print(f"No deadline tags added for document {document_id}.")
+
+            return 0
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             print(f"HTTP error during post-consume hook: {exc.code} {body}", file=sys.stderr)
-            sys.exit(1)
+            return 1
         except Exception as exc:
             print(f"Unexpected error during post-consume hook: {exc}", file=sys.stderr)
-            sys.exit(1)
+            return 1
+
+    if __name__ == "__main__":
+        sys.exit(main())

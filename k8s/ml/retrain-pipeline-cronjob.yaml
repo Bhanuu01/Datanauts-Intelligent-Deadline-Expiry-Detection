@@ -27,10 +27,24 @@ spec:
                   value: "500"
                 - name: MAX_CORRECTION_RATE
                   value: "0.15"
+                - name: MIN_WRONG_FEEDBACK_SELECTIONS
+                  value: "50"
                 - name: NER_MODEL_NAME
                   value: bert_ner_v5
                 - name: CLASSIFIER_MODEL_NAME
                   value: roberta_clf_v5
+                - name: PAPERLESS_API_URL
+                  value: http://paperless-ngx.paperless.svc.cluster.local:8000
+                - name: PAPERLESS_ADMIN_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: paperless-secrets
+                      key: PAPERLESS_ADMIN_USER
+                - name: PAPERLESS_ADMIN_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: paperless-secrets
+                      key: PAPERLESS_ADMIN_PASSWORD
                 - name: MLFLOW_TRACKING_URI
                   value: http://mlflow.platform.svc.cluster.local:5000
                 - name: MLFLOW_S3_ENDPOINT_URL
