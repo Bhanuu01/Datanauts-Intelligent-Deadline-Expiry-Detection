@@ -459,6 +459,26 @@ deadline_onnx_predictions_total
 online_features_ingest_requests_total
 ```
 
+## Demo Prep
+
+Before a live presentation, run these helpers on the Chameleon node:
+
+```bash
+export KUBECONFIG=~/.kube/config
+./scripts/demo-readiness-check.sh
+./scripts/demo-links.sh
+```
+
+To avoid empty output from stale hard-coded job names, use:
+
+```bash
+./scripts/latest-job-log.sh ml retrain 120
+./scripts/latest-job-log.sh ml drift-monitor 60
+./scripts/latest-job-log.sh ml data-quality 60
+```
+
+These scripts resolve the newest matching Kubernetes Job automatically.
+
 ## Current Known Limitations
 
 - PDF deadline extraction is not perfect.

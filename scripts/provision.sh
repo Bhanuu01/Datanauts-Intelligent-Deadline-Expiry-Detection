@@ -31,6 +31,10 @@ kubectl rollout status deployment/mlflow -n platform --timeout=300s
 
 echo ""
 echo "=== All done! ==="
-echo "Paperless-ngx: http://$(curl -s ifconfig.me)"
-echo "MLflow:        http://$(curl -s ifconfig.me)/mlflow"
+PUBLIC_IP="$(curl -s ifconfig.me || true)"
+echo "Paperless-ngx: http://${PUBLIC_IP}"
+echo "MLflow:        http://${PUBLIC_IP}:30500"
+echo "MinIO Console: http://${PUBLIC_IP}:30901"
+echo "Grafana:       http://${PUBLIC_IP}/grafana/login"
+echo "Prometheus:    http://${PUBLIC_IP}/prometheus/graph"
 kubectl get pods -A
