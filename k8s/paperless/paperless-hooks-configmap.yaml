@@ -31,18 +31,9 @@ data:
     RESULTS_DIR = Path(os.getenv("DEADLINE_RESULTS_DIR", "/usr/src/paperless/data/deadline-results"))
     ASYNC_CHILD_ENV = "DEADLINE_POST_CONSUME_ASYNC_CHILD"
     ASYNC_ENABLED = os.getenv("DEADLINE_POST_CONSUME_ASYNC", "true").lower() in {"1", "true", "yes"}
-    REVIEW_PENDING_TAG = "Review"
-    FEEDBACK_CORRECT_TAG = "Correct"
-    FEEDBACK_WRONG_TAG = "Wrong"
-    DEADLINE_DETECTED_TAG = "Deadline"
-    REVIEW_NEEDED_TAG = "Check"
-    EVENT_ACTIONS = {
-        "effective": "Takes Effect",
-        "renewal": "Renews",
-        "expiration": "Expires",
-        "agreement": "Agrees",
-        "notice_period": "Give Notice",
-    }
+    STATUS_REVIEW_TAG = "Status:Review Needed"
+    FEEDBACK_CORRECT_TAG = "Action:Accept"
+    FEEDBACK_WRONG_TAG = "Action:Reject"
 
     def basic_auth_header() -> str:
         import base64
@@ -137,10 +128,6 @@ data:
         event_label = event_type.replace("_", " ").title()
         tags = [f"Type:{event_label}"]
 
-        action_label = EVENT_ACTIONS.get(event_type)
-        if action_label:
-            tags.append(f"Action:{action_label}")
-
         candidates = []
         deadline_date = (event.get("deadline_date") or "").strip()
         if deadline_date:
@@ -154,6 +141,7 @@ data:
         for candidate in candidates:
             normalized = normalize_deadline_date(candidate)
             if normalized and normalized not in seen:
+                tags.append(f"Deadline:{normalized}")
                 tags.append(f"{event_label}:{normalized}")
                 seen.add(normalized)
 
@@ -161,12 +149,8 @@ data:
 
     def build_tags(result: Dict[str, Any]) -> List[str]:
         tags = []
-        if result.get("has_deadline"):
-            tags.append(DEADLINE_DETECTED_TAG)
-            tags.append(REVIEW_PENDING_TAG)
         if result.get("uncertain"):
-            tags.append(REVIEW_NEEDED_TAG)
-            tags.append(REVIEW_PENDING_TAG)
+            tags.append(STATUS_REVIEW_TAG)
         for event in result.get("events", []):
             tags.extend(build_event_tags(event))
 
