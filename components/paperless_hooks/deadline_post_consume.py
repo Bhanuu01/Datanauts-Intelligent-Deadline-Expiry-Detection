@@ -25,12 +25,18 @@ FEEDBACK_URL = os.getenv(
 RESULTS_DIR = Path(os.getenv("DEADLINE_RESULTS_DIR", "/usr/src/paperless/data/deadline-results"))
 ASYNC_CHILD_ENV = "DEADLINE_POST_CONSUME_ASYNC_CHILD"
 ASYNC_ENABLED = os.getenv("DEADLINE_POST_CONSUME_ASYNC", "true").lower() in {"1", "true", "yes"}
-DEADLINE_TAG_PREFIX = "Due:"
 REVIEW_PENDING_TAG = "Review"
 FEEDBACK_CORRECT_TAG = "Correct"
 FEEDBACK_WRONG_TAG = "Wrong"
 DEADLINE_DETECTED_TAG = "Deadline"
 REVIEW_NEEDED_TAG = "Check"
+EVENT_ACTIONS = {
+    "effective": "Takes Effect",
+    "renewal": "Renews",
+    "expiration": "Expires",
+    "agreement": "Agrees",
+    "notice_period": "Give Notice",
+}
 
 
 def basic_auth_header() -> str:
@@ -122,12 +128,7 @@ def build_tags(result: Dict[str, Any]) -> List[str]:
         tags.append(REVIEW_PENDING_TAG)
 
     for event in result.get("events", []):
-        event_type = event.get("event_type", "unknown")
-        tags.append(str(event_type).replace("_", " ").title())
-
-    deadline_tag = build_deadline_date_tag(result)
-    if deadline_tag:
-        tags.append(deadline_tag)
+        tags.extend(build_event_tags(event))
 
     return sorted(set(tags))
 
@@ -155,22 +156,32 @@ def normalize_deadline_date(raw_date: str) -> str:
     return re.sub(r"[^0-9A-Za-z_-]+", "-", cleaned).strip("-")
 
 
-def build_deadline_date_tag(result: Dict[str, Any]) -> str | None:
-    for event in result.get("events", []):
-        candidates = []
-        deadline_date = (event.get("deadline_date") or "").strip()
-        if deadline_date:
-            candidates.append(deadline_date)
-        for candidate in event.get("date_candidates", []) or []:
-            candidate = (candidate or "").strip()
-            if candidate:
-                candidates.append(candidate)
+def build_event_tags(event: Dict[str, Any]) -> List[str]:
+    event_type = str(event.get("event_type", "unknown")).strip().lower() or "unknown"
+    event_label = event_type.replace("_", " ").title()
+    tags = [f"Type:{event_label}"]
 
-        for candidate in candidates:
-            normalized = normalize_deadline_date(candidate)
-            if normalized:
-                return f"{DEADLINE_TAG_PREFIX}{normalized}"
-    return None
+    action_label = EVENT_ACTIONS.get(event_type)
+    if action_label:
+        tags.append(f"Action:{action_label}")
+
+    candidates = []
+    deadline_date = (event.get("deadline_date") or "").strip()
+    if deadline_date:
+        candidates.append(deadline_date)
+    for candidate in event.get("date_candidates", []) or []:
+        candidate = (candidate or "").strip()
+        if candidate:
+            candidates.append(candidate)
+
+    seen = set()
+    for candidate in candidates:
+        normalized = normalize_deadline_date(candidate)
+        if normalized and normalized not in seen:
+            tags.append(f"{event_label}:{normalized}")
+            seen.add(normalized)
+
+    return tags
 
 
 def persist_result(document_id: int, result: Dict[str, Any]) -> None:
