@@ -1,8 +1,0 @@
-version: '3.8'
-services:
-  data-generator:
-    build: .
-    environment:
-      - SERVICE_URL=http://feature-service:8000
-      - REQUESTS_PER_MINUTE=10
-    restart: unless-stopped
