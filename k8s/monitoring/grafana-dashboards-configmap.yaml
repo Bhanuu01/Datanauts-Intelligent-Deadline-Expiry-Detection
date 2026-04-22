@@ -1477,7 +1477,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "min(kube_deployment_status_replicas_available{namespace=\"platform\",deployment=~\"mlflow|minio\"} > 0)",
+              "expr": "clamp_min(1 - sum(kube_deployment_status_replicas_unavailable{namespace=\"platform\",deployment=~\"mlflow|minio\"}), 0)",
               "range": true,
               "refId": "A"
             }
@@ -1551,7 +1551,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "min(kube_deployment_status_replicas_available{namespace=\"monitoring\",deployment=~\"grafana|prometheus\"} > 0)",
+              "expr": "clamp_min(1 - sum(kube_deployment_status_replicas_unavailable{namespace=\"monitoring\",deployment=~\"grafana|prometheus\"}), 0)",
               "range": true,
               "refId": "A"
             }
