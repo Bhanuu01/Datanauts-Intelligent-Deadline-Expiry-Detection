@@ -30,9 +30,9 @@ spec:
                 - name: MIN_WRONG_FEEDBACK_SELECTIONS
                   value: "50"
                 - name: NER_MODEL_NAME
-                  value: bert_ner_v6
+                  value: bert_ner_v4
                 - name: CLASSIFIER_MODEL_NAME
-                  value: roberta_clf_v6
+                  value: roberta_clf_v3
                 - name: FEEDBACK_CHECKPOINT_PATH
                   value: /data/feedback_checkpoint.json
                 - name: PAPERLESS_API_URL

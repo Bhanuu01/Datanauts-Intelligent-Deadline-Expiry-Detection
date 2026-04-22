@@ -189,26 +189,91 @@ def package_candidate(ner_model_name: str, classifier_model_name: str) -> Dict[s
     return package_manifest
 
 
-def latest_experiment_metrics(tracking_uri: str, experiment_name: str) -> Dict[str, Any]:
+def load_model_run_metadata(model_dir: str) -> Dict[str, Any] | None:
+    metadata_path = Path(model_dir) / "mlflow_run.json"
+    if not metadata_path.exists():
+        return None
+
+    try:
+        return json.loads(metadata_path.read_text())
+    except json.JSONDecodeError:
+        return None
+
+
+def fetch_run_metrics(client: MlflowClient, run_id: str) -> Dict[str, Any]:
+    run = client.get_run(run_id)
+    return {
+        "run_id": run.info.run_id,
+        "status": run.info.status,
+        "metrics": dict(run.data.metrics),
+        "params": dict(run.data.params),
+    }
+
+
+def best_successful_experiment_metrics(
+    tracking_uri: str,
+    experiment_name: str,
+    preferred_model_name: str | None = None,
+) -> Dict[str, Any]:
     client = MlflowClient(tracking_uri=tracking_uri)
     experiment = client.get_experiment_by_name(experiment_name)
     if experiment is None:
         raise RuntimeError(f"MLflow experiment not found: {experiment_name}")
 
+    filters = ["attributes.status = 'FINISHED'"]
+    if preferred_model_name:
+        filters.append(f"params.model_name = '{preferred_model_name}'")
+
     runs = client.search_runs(
         experiment_ids=[experiment.experiment_id],
-        order_by=["attributes.start_time DESC"],
-        max_results=1,
+        filter_string=" and ".join(filters),
+        order_by=["metrics.test_f1 DESC", "attributes.start_time DESC"],
+        max_results=25,
     )
+
+    if not runs and preferred_model_name:
+        runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            filter_string="attributes.status = 'FINISHED'",
+            order_by=["metrics.test_f1 DESC", "attributes.start_time DESC"],
+            max_results=50,
+        )
+        runs = [
+            run for run in runs
+            if "baseline" not in dict(run.data.params).get("model_name", "").lower()
+        ]
+
     if not runs:
-        raise RuntimeError(f"No MLflow runs found for experiment: {experiment_name}")
+        raise RuntimeError(f"No successful MLflow runs found for experiment: {experiment_name}")
 
     run = runs[0]
     return {
         "run_id": run.info.run_id,
+        "status": run.info.status,
         "metrics": dict(run.data.metrics),
         "params": dict(run.data.params),
     }
+
+
+def selected_experiment_metrics(
+    tracking_uri: str,
+    experiment_name: str,
+    model_dir: str,
+    preferred_model_name: str | None = None,
+) -> Dict[str, Any]:
+    metadata = load_model_run_metadata(model_dir)
+    client = MlflowClient(tracking_uri=tracking_uri)
+
+    if metadata and metadata.get("run_id"):
+        run_metrics = fetch_run_metrics(client, str(metadata["run_id"]))
+        if run_metrics["status"] == "FINISHED":
+            return run_metrics
+
+    return best_successful_experiment_metrics(
+        tracking_uri=tracking_uri,
+        experiment_name=experiment_name,
+        preferred_model_name=preferred_model_name,
+    )
 
 
 def ensure_registered_model(client: MlflowClient, model_name: str) -> None:
@@ -293,9 +358,17 @@ def build_evaluation_metrics(package_manifest: Dict[str, Any]) -> Dict[str, Any]
         raise RuntimeError("End-to-end evaluation failed")
 
     evaluation_metrics = json.loads(evaluation_path.read_text())
-    ner_metrics = latest_experiment_metrics(tracking_uri, os.getenv("NER_EXPERIMENT_NAME", "deadline-detection-ner"))
-    clf_metrics = latest_experiment_metrics(
-        tracking_uri, os.getenv("CLASSIFIER_EXPERIMENT_NAME", "deadline-detection-classifier")
+    ner_metrics = selected_experiment_metrics(
+        tracking_uri,
+        os.getenv("NER_EXPERIMENT_NAME", "deadline-detection-ner"),
+        package_manifest["ner_path"],
+        package_manifest["ner_model_name"],
+    )
+    clf_metrics = selected_experiment_metrics(
+        tracking_uri,
+        os.getenv("CLASSIFIER_EXPERIMENT_NAME", "deadline-detection-classifier"),
+        package_manifest["classifier_path"],
+        package_manifest["classifier_model_name"],
     )
 
     evaluation_metrics.update(
@@ -334,8 +407,8 @@ def orchestrate_training() -> Dict[str, Any]:
     )
 
     config = {
-        "ner_model": os.getenv("NER_MODEL_NAME", "bert_ner_v5"),
-        "classifier_model": os.getenv("CLASSIFIER_MODEL_NAME", "roberta_clf_v5"),
+        "ner_model": os.getenv("NER_MODEL_NAME", "bert_ner_v4"),
+        "classifier_model": os.getenv("CLASSIFIER_MODEL_NAME", "roberta_clf_v3"),
     }
 
     commands: List[List[str]] = []

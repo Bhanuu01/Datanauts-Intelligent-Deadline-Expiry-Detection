@@ -78,7 +78,7 @@ def collect(predictions_path, threshold, queue_file, trigger_n):
     if q_size >= trigger_n:
         print(f"\n[ALERT] Queue reached {q_size} samples — RETRAIN TRIGGER reached!")
         print(f"  Next step: add human_label to {queue_file}, then run:")
-        print(f"  python src/feedback_loop.py --retrain --clf_model roberta_clf_v5 --next_version v7\n")
+        print(f"  python src/feedback_loop.py --retrain --clf_model roberta_clf_v3 --next_version v7\n")
 
 
 def retrain(clf_model, next_version, queue_file):
@@ -162,7 +162,7 @@ def main():
     group.add_argument("--status",   action="store_true", help="Print queue size and trigger status")
 
     parser.add_argument("--predictions", default=None,      help="[collect] Path to predict.py output JSON")
-    parser.add_argument("--clf_model",   default="roberta_clf_v5", help="[retrain] Current classifier model name")
+    parser.add_argument("--clf_model",   default="roberta_clf_v3", help="[retrain] Current classifier model name")
     parser.add_argument("--next_version",default="v7",      help="[retrain] Version tag for retrained model")
     parser.add_argument("--threshold",   type=float, default=CONFIDENCE_THRESHOLD)
     parser.add_argument("--trigger_n",   type=int,   default=RETRAIN_TRIGGER_N)

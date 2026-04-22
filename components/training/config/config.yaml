@@ -1,10 +1,10 @@
 model:
-  name: "bert_ner_v5"
+  name: "bert_ner_v4"
   base_model: "dslim/bert-base-NER"
   num_labels: 9  # O B-EXP_DATE I-EXP_DATE B-START_DATE I-START_DATE B-DURATION I-DURATION B-NOTICE_DATE I-NOTICE_DATE
 
 classifier:
-  name: "roberta_clf_v5"
+  name: "roberta_clf_v3"
   base_model: "roberta-base"
   num_labels: 6  # none expiration effective renewal agreement notice_period
   label_schema: "none|expiration|effective|renewal|agreement|notice_period"

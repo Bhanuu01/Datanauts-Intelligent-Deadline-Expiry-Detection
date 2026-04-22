@@ -29,4 +29,4 @@ ENV GIT_PYTHON_REFRESH=quiet
 # Step 4 Feedback:  python src/feedback_loop.py --collect --predictions predict_out.json
 # Step 5 Predict:   python src/predict.py      --clf_model <path> --ner_model <path> --sentences "..."
 
-CMD ["python", "src/train_ner.py", "--model", "bert_ner_v5"]
+CMD ["python", "src/train_ner.py", "--model", "bert_ner_v4"]

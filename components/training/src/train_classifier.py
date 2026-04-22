@@ -1,8 +1,9 @@
-import os, time, platform, argparse, random
+import json, os, time, shutil, tempfile, platform, argparse, random
 import torch, torch.nn as nn, torch.nn.functional as F, mlflow, mlflow.pytorch
 import numpy as np
 from collections import Counter
 from datasets import load_from_disk
+from pathlib import Path
 from transformers import (
     AutoTokenizer, AutoModelForSequenceClassification,
     TrainingArguments, Trainer, DataCollatorWithPadding,
@@ -210,7 +211,10 @@ def train_classifier(model_name, cfg, tok_train, tok_val, tok_test, tokenizer, c
     print(f"Training {model_name} | lr={cfg['learning_rate']} | epochs={cfg['epochs']}...")
     t0           = time.time()
     train_result = trainer.train()
-    trainer.save_model(f"{OUTPUT_DIR}-{model_name}")
+    model_dir = Path(f"{OUTPUT_DIR}-{model_name}")
+    trainer.save_model(str(model_dir))
+    for checkpoint_dir in model_dir.glob("checkpoint-*"):
+        shutil.rmtree(checkpoint_dir, ignore_errors=True)
     train_time   = time.time() - t0
 
     print("Evaluating on test set...")
@@ -235,6 +239,7 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT)
     with mlflow.start_run(run_name=model_name):
+        active_run = mlflow.active_run()
         mlflow.log_params({
             "model_name":     model_name,
             "base_model":     cfg["base_model"],
@@ -283,9 +288,40 @@ def log_to_mlflow(model_name, cfg, model, train_result, test_result, train_time,
         })
         if report:
             mlflow.log_text(report, "clf_classification_report.txt")
-        model_dir = f"{OUTPUT_DIR}-{model_name}"
-        if os.path.isdir(model_dir):
-            mlflow.log_artifacts(model_dir, artifact_path="model")
+        model_dir = Path(f"{OUTPUT_DIR}-{model_name}")
+        if model_dir.is_dir():
+            metadata = {
+                "experiment": EXPERIMENT,
+                "run_id": active_run.info.run_id if active_run else None,
+                "run_name": model_name,
+                "status": "FINISHED",
+                "metrics": {
+                    "test_f1": test_result.get("eval_f1", 0),
+                    "test_accuracy": test_result.get("eval_accuracy", 0),
+                },
+            }
+            metadata_path = model_dir / "mlflow_run.json"
+            metadata_path.write_text(json.dumps(metadata, indent=2))
+            with tempfile.TemporaryDirectory() as artifact_dir:
+                artifact_root = Path(artifact_dir)
+                for artifact_name in [
+                    "config.json",
+                    "model.safetensors",
+                    "pytorch_model.bin",
+                    "special_tokens_map.json",
+                    "tokenizer.json",
+                    "tokenizer_config.json",
+                    "training_args.bin",
+                    "vocab.txt",
+                    "merges.txt",
+                    "sentencepiece.bpe.model",
+                    "spiece.model",
+                ]:
+                    src = model_dir / artifact_name
+                    if src.exists():
+                        shutil.copy2(src, artifact_root / artifact_name)
+                (artifact_root / "mlflow_run.json").write_text(json.dumps(metadata, indent=2))
+                mlflow.log_artifacts(str(artifact_root), artifact_path="model")
             print(f"Model weights uploaded → MinIO (artifact_path=model)")
         print(f"Logged {model_name} → {MLFLOW_URI}")
 
