@@ -22,10 +22,10 @@ data:
           - targets: ['kube-state-metrics.monitoring.svc.cluster.local:8080']
 
       - job_name: 'onnx-serving'
-      scrape_interval: 5s
-      metrics_path: '/metrics'
-      static_configs:
-        - targets: ['deadline-onnx-serving.ml.svc.cluster.local:8004']
+        scrape_interval: 5s
+        metrics_path: '/metrics'
+        static_configs:
+          - targets: ['deadline-onnx-serving.ml.svc.cluster.local:8004']
 
       - job_name: kubernetes-services
         kubernetes_sd_configs:
