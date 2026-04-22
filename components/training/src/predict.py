@@ -1,6 +1,8 @@
 import re, argparse
+from functools import lru_cache
 from dateutil import parser as dateutil_parser
 from transformers import pipeline
+import torch
 
 CONFIDENCE_THRESHOLD = 0.7
 
@@ -22,6 +24,27 @@ ALLOWED_ENTITIES = {
     "agreement":     {"START_DATE"},
     "notice_period": {"NOTICE_DATE", "DURATION"},
 }
+
+
+def _pipeline_device():
+    return 0 if torch.cuda.is_available() else -1
+
+
+@lru_cache(maxsize=8)
+def _load_pipelines(clf_model_path, ner_model_path, device):
+    clf_pipe = pipeline(
+        "text-classification",
+        model=clf_model_path,
+        top_k=None,
+        device=device,
+    )
+    ner_pipe = pipeline(
+        "token-classification",
+        model=ner_model_path,
+        aggregation_strategy=None,
+        device=device,
+    )
+    return clf_pipe, ner_pipe
 
 
 def _resolve_date(text):
@@ -83,17 +106,10 @@ def predict(
     if not sentences:
         return {"contract_id": contract_id, "has_deadline": False, "uncertain": False, "multi_date_conflict": False, "events": []}
 
-    clf_pipe = pipeline(
-        "text-classification",
-        model=clf_model_path,
-        top_k=None,
-        device=-1,
-    )
-    ner_pipe = pipeline(
-        "token-classification",
-        model=ner_model_path,
-        aggregation_strategy=None,
-        device=-1,
+    clf_pipe, ner_pipe = _load_pipelines(
+        clf_model_path,
+        ner_model_path,
+        _pipeline_device(),
     )
 
     groups = {}  # event_type → [(sentence, confidence, all_scores)]
