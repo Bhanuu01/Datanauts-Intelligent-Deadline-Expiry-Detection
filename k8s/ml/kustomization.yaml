@@ -1,4 +1,5 @@
 resources:
+  - nvidia-runtimeclass.yaml
   - namespace.yaml
   - model-storage-pvc.yaml
   - data-generator-deployment.yaml
