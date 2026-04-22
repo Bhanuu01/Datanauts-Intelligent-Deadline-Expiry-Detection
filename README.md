@@ -163,6 +163,14 @@ The script builds Docker images and imports them into `k3s` using:
 - `ghcr.io/bhanuu01/datanauts-inference-runtime:latest`
 - `ghcr.io/bhanuu01/datanauts-onnx-serving:latest`
 
+The automation CronJobs (`retrain-pipeline`, `model-promotion-gate`, and
+`release-promotion`) are configured with `imagePullPolicy: Never`, so after
+changing platform automation code you should re-run:
+
+```bash
+./scripts/rebuild-k3s-images.sh platform-automation
+```
+
 ## Deploy the System
 
 ### 1. Paperless
