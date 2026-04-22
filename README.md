@@ -1,38 +1,40 @@
 # Datanauts Intelligent Deadline Detection
 
-Integrated MLOps system for deadline extraction inside Paperless-ngx, deployed on Kubernetes.
+Integrated MLOps system for deadline detection inside Paperless-ngx, deployed on Kubernetes on Chameleon.
 
-This repository is the main integrated codebase for the team project. It contains:
+This branch, `devops/final-hardening`, is the current demo-ready branch used for the integrated system, monitoring fixes, secret handling updates, and Paperless deadline-tag flow.
 
-- the Paperless post-consume ML integration
-- ONNX serving for deadline detection
-- online features and synthetic production traffic generation
-- retraining, promotion, and release automation
-- MLflow and MinIO platform services
-- Prometheus and Grafana monitoring
-- Kubernetes manifests for `paperless`, `platform`, `ml`, `monitoring`, and release environments
+## Overview
 
-## What This System Does
+The system adds an ML-powered deadline feature directly into the normal Paperless-ngx workflow.
 
-The deployed system takes documents uploaded into Paperless-ngx, extracts OCR text, runs deadline detection, writes the result back into Paperless as tags, stores prediction artifacts, records feedback, and supports retraining and release automation.
+When a document is ingested:
 
-Main flow:
+1. Paperless OCR/parsing runs.
+2. A Paperless post-consume hook sends OCR text to the ONNX serving service.
+3. ONNX serving returns deadline-related events and extracted date candidates.
+4. The hook writes prediction artifacts to Paperless storage.
+5. Paperless updates the document with ML-generated tags.
+6. Feedback is captured with Paperless tags and logged for retraining.
+7. Retraining, gating, and release automation run as Kubernetes jobs and cronjobs.
 
-1. A user uploads a document into Paperless.
-2. Paperless OCR/parsing runs.
-3. A post-consume hook calls the ONNX deadline detection service.
-4. The prediction result is saved to the shared volume.
-5. Paperless adds ML tags such as:
-   - `Type:Deadline`
-   - `Deadline:YYYY-MM-DD`
-   - `Type:Effective`
-   - `Effective:YYYY-MM-DD`
-   - `Status:Review Needed`
-6. Users can review the result in Paperless using:
-   - `Action:Accept`
-   - `Action:Reject`
-7. Feedback and production traffic are logged for retraining.
-8. Retraining and model promotion jobs run inside Kubernetes.
+## What You Should See In Paperless
+
+For positive examples, Paperless should add tags such as:
+
+- `Type:Deadline`
+- `Deadline:YYYY-MM-DD`
+- `Type:Effective`
+- `Effective:YYYY-MM-DD`
+- `Type:Renewal`
+- `Status:Review Needed`
+
+Reviewer feedback is captured with:
+
+- `Action:Accept`
+- `Action:Reject`
+
+If a document repeats multiple notice blocks, you may see multiple `Deadline:*` and `Effective:*` tags on the same document. That is expected behavior.
 
 ## Repository Layout
 
@@ -50,48 +52,54 @@ components/
 k8s/
   paperless/                   Paperless, Postgres, Redis
   platform/                    MLflow, MinIO, MLflow Postgres
-  ml/                          ONNX serving, online-features, generator, cronjobs
+  ml/                          ONNX serving, online-features, data generator, cronjobs
   monitoring/                  Prometheus, Grafana, kube-state-metrics
   release/                     Staging / canary / production serving layer
+  sealed-secrets/              Optional sealed-secret manifests
 
 scripts/
-  provision.sh                 Base cluster bootstrap
+  provision.sh                 Cluster bootstrap helper
   create-secrets.sh            Secret creation
+  sync-runtime-secrets.sh      Mirrors runtime secrets into ml namespace
   rebuild-k3s-images.sh        Build and import local images into k3s
   chameleon-health-check.sh    Cluster sanity check
+  demo-readiness-check.sh      Demo validation helper
+  demo-links.sh                Prints public URLs
+  latest-job-log.sh            Prints newest matching job log
 ```
 
 ## Branches
 
-- `main`: current integrated branch and recommended source of truth
-- `paperless-ngx-import`: snapshot branch containing imported upstream Paperless code under `third_party/`
+- `devops/final-hardening`: current demo/integration branch
+- `main`: stable integrated baseline
+- `paperless-ngx-import`: imported upstream Paperless snapshot
 
-If you are reproducing or extending the current system, use `main`.
+If you want the current demo behavior, use `devops/final-hardening`.
 
 ## Prerequisites
 
-Recommended environment:
+Recommended target environment:
 
 - Ubuntu VM on Chameleon
 - single-node `k3s`
-- Docker installed on the node
-- enough disk and RAM for local image builds
+- Docker available on the node
+- enough disk space for local image builds and imported model artifacts
 
-Useful baseline:
+Practical baseline:
 
 - 1 node
 - 48 vCPU
 - 240 GiB RAM
-- at least 40 GiB free root disk recommended before rebuilding images
+- at least 40 GiB free root disk before rebuilding images
 
-## One-Time Cluster Setup
+## Quick Start
 
-### 1. Clone the repository
+### 1. Clone and check out the branch
 
 ```bash
 git clone https://github.com/Bhanuu01/Datanauts-Intelligent-Deadline-Expiry-Detection.git
 cd Datanauts-Intelligent-Deadline-Expiry-Detection
-git checkout main
+git checkout devops/final-hardening
 ```
 
 ### 2. Install k3s
@@ -111,18 +119,7 @@ Verify:
 kubectl get nodes
 ```
 
-### 3. Create namespaces
-
-```bash
-kubectl apply -f k8s/namespace-paperless.yaml
-kubectl apply -f k8s/namespace-platform.yaml
-kubectl apply -f k8s/namespace-ml.yaml
-kubectl apply -f k8s/monitoring/namespace.yaml
-```
-
-### 4. Create secrets
-
-Run once:
+### 3. Create secrets
 
 ```bash
 bash scripts/create-secrets.sh
@@ -133,40 +130,30 @@ This creates:
 - `paperless-secrets` in `paperless`
 - `platform-secrets` in `platform`
 - `monitoring-secrets` in `monitoring`
-- mirrored runtime copies of `paperless-secrets` and `platform-secrets` in `ml`
+- mirrored runtime copies in `ml`
 
-By default the script generates strong random values and does not print them.
-If you need to persist the generated credentials outside the cluster, use:
+Optional:
 
 ```bash
 SAVE_CREDENTIALS_FILE=~/datanauts-secrets.env bash scripts/create-secrets.sh
 ```
 
-To print them explicitly for one run:
-
-```bash
-SHOW_GENERATED_SECRETS=true bash scripts/create-secrets.sh
-```
-
-If you are using Bitnami Sealed Secrets for the source namespaces, apply the
-sealed manifests first and then refresh the runtime copies used by ML jobs:
+If you use Sealed Secrets:
 
 ```bash
 kubectl apply -k k8s/sealed-secrets/
 USE_EXISTING_SOURCE_SECRETS=true bash scripts/create-secrets.sh
 ```
 
-## Build and Import Local Images
+### 4. Build and import local images
 
-This project depends on locally built images that must be imported into the `k3s` container runtime.
-
-Build everything:
+Build all custom images:
 
 ```bash
 ./scripts/rebuild-k3s-images.sh
 ```
 
-Build only one image family:
+Build only one family:
 
 ```bash
 ./scripts/rebuild-k3s-images.sh onnx-serving
@@ -174,56 +161,25 @@ Build only one image family:
 ./scripts/rebuild-k3s-images.sh data-monitoring
 ```
 
-The script builds Docker images and imports them into `k3s` using:
+Custom images used by this deployment include:
 
 - `ghcr.io/bhanuu01/datanauts-online-features:latest`
 - `ghcr.io/bhanuu01/datanauts-data-generator:latest`
 - `ghcr.io/bhanuu01/datanauts-data-monitoring:latest`
 - `ghcr.io/bhanuu01/datanauts-platform-automation:latest`
-- `ghcr.io/bhanuu01/datanauts-inference-runtime:latest`
 - `ghcr.io/bhanuu01/datanauts-onnx-serving:latest`
 
-The automation CronJobs (`retrain-pipeline`, `model-promotion-gate`, and
-`release-promotion`) are configured with `imagePullPolicy: Never`, so after
-changing platform automation code you should re-run:
-
-```bash
-./scripts/rebuild-k3s-images.sh platform-automation
-```
-
-## Deploy the System
-
-### 1. Paperless
+### 5. Deploy the stack
 
 ```bash
 kubectl apply -f k8s/paperless/
-```
-
-### 2. Platform Services
-
-```bash
 kubectl apply -f k8s/platform/
-```
-
-### 3. Monitoring
-
-```bash
 kubectl apply -k k8s/monitoring
-```
-
-### 4. ML Services
-
-```bash
 kubectl apply -k k8s/ml
-```
-
-### 5. Release Layer
-
-```bash
 kubectl apply -k k8s/release
 ```
 
-### 6. Verify rollouts
+### 6. Verify deployments
 
 ```bash
 kubectl rollout status deployment/paperless-ngx -n paperless --timeout=300s
@@ -235,7 +191,7 @@ kubectl rollout status deployment/online-features -n ml --timeout=300s
 kubectl rollout status deployment/deadline-onnx-serving -n ml --timeout=300s
 ```
 
-## Access URLs
+## Public URLs
 
 Current Chameleon deployment:
 
@@ -246,55 +202,40 @@ Current Chameleon deployment:
 - Grafana: [http://129.114.27.190/grafana/login](http://129.114.27.190/grafana/login)
 - Prometheus: [http://129.114.27.190/prometheus/graph](http://129.114.27.190/prometheus/graph)
 
-If you deploy on another node, replace the IP with your node’s public address.
+If you deploy on another node, replace the public IP.
 
-## Access and Credentials
+## Credentials
 
-Public service endpoints:
+Do not store credentials in documentation. Read them from Kubernetes secrets.
 
 ### Paperless
 
-- URL: [http://129.114.27.190](http://129.114.27.190)
-
-### MLflow
-
-- URL: [http://129.114.27.190:30500](http://129.114.27.190:30500)
-
-### MinIO Console
-
-- URL: [http://129.114.27.190:30901](http://129.114.27.190:30901)
-
-### MinIO S3 API
-
-- Endpoint: [http://129.114.27.190:30900](http://129.114.27.190:30900)
+```bash
+kubectl get secret -n paperless paperless-secrets -o jsonpath='{.data.PAPERLESS_ADMIN_USER}' | base64 --decode && echo
+kubectl get secret -n paperless paperless-secrets -o jsonpath='{.data.PAPERLESS_ADMIN_PASSWORD}' | base64 --decode && echo
+```
 
 ### Grafana
 
-- URL: [http://129.114.27.190/grafana/login](http://129.114.27.190/grafana/login)
-
-### Prometheus
-
-- URL: [http://129.114.27.190/prometheus/graph](http://129.114.27.190/prometheus/graph)
-
-Retrieve credentials from Kubernetes Secrets instead of storing them in documentation. Example commands:
-
 ```bash
-kubectl get secret -n paperless paperless-secrets -o yaml
-kubectl get secret -n platform platform-secrets -o yaml
-kubectl get secret -n monitoring monitoring-secrets -o yaml
-```
-
-To print decoded values only when needed:
-
-```bash
-kubectl get secret -n paperless paperless-secrets -o jsonpath='{.data.PAPERLESS_ADMIN_PASSWORD}' | base64 --decode && echo
-kubectl get secret -n platform platform-secrets -o jsonpath='{.data.MINIO_ROOT_PASSWORD}' | base64 --decode && echo
+kubectl get secret -n monitoring monitoring-secrets -o jsonpath='{.data.GRAFANA_ADMIN_USER}' | base64 --decode && echo
 kubectl get secret -n monitoring monitoring-secrets -o jsonpath='{.data.GRAFANA_ADMIN_PASSWORD}' | base64 --decode && echo
 ```
 
+### MinIO
+
+```bash
+echo mlflow
+kubectl get secret -n platform platform-secrets -o jsonpath='{.data.MINIO_ROOT_PASSWORD}' | base64 --decode && echo
+```
+
+### MLflow and Prometheus
+
+In this deployment, MLflow and Prometheus are normally shown without separate login credentials.
+
 ## Internal Service Endpoints
 
-Inside the cluster, use:
+Inside the cluster:
 
 - Paperless API: `http://paperless-ngx.paperless.svc.cluster.local:8000`
 - Online features: `http://online-features.ml.svc.cluster.local:8000`
@@ -303,16 +244,16 @@ Inside the cluster, use:
 - MinIO: `http://minio.platform.svc.cluster.local:9000`
 - Prometheus: `http://prometheus.monitoring.svc.cluster.local:9090/prometheus`
 
-## How to Run the Live System
+## Daily Operations
 
-### Cluster health check
+### Cluster health
 
 ```bash
 export KUBECONFIG=~/.kube/config
 bash scripts/chameleon-health-check.sh
 ```
 
-### Current pod view
+### Pod status
 
 ```bash
 kubectl get pods -n paperless
@@ -321,34 +262,26 @@ kubectl get pods -n monitoring
 kubectl get pods -n ml
 ```
 
-### Data generator logs
-
-```bash
-kubectl logs -n ml deploy/data-generator --tail=50
-```
-
-### ONNX serving logs
-
-```bash
-kubectl logs -n ml deploy/deadline-onnx-serving --tail=100
-```
-
-### Paperless logs
+### Service logs
 
 ```bash
 kubectl logs -n paperless deploy/paperless-ngx --tail=150
+kubectl logs -n ml deploy/deadline-onnx-serving --tail=100
+kubectl logs -n ml deploy/online-features --tail=100
+kubectl logs -n ml deploy/data-generator --tail=50
 ```
 
-## How to Use the Product
+## Using the Product
 
 ### Upload a document in Paperless
 
 1. Open Paperless.
 2. Upload a `.txt` or `.pdf`.
-3. Wait for processing.
+3. Wait for Paperless processing to complete.
 4. Open the document details page.
+5. Inspect generated tags.
 
-Expected ML tags on a positive example:
+Expected tags on a positive example:
 
 - `Type:Deadline`
 - `Deadline:YYYY-MM-DD`
@@ -356,26 +289,24 @@ Expected ML tags on a positive example:
 - `Effective:YYYY-MM-DD`
 - `Status:Review Needed`
 
-Feedback tags available in the tag picker:
+Feedback tags available in Paperless:
 
 - `Action:Accept`
 - `Action:Reject`
 
-### Result files
-
-Prediction artifacts are written here inside Paperless:
+### Result artifacts inside Paperless
 
 ```bash
 kubectl exec -n paperless deploy/paperless-ngx -- sh -c 'ls -lah /usr/src/paperless/data/deadline-results'
 ```
 
-Inspect results:
+Inspect a result:
 
 ```bash
-kubectl exec -n paperless deploy/paperless-ngx -- sh -c 'tail -n 200 /usr/src/paperless/data/deadline-results/*.json'
+kubectl exec -n paperless deploy/paperless-ngx -- sh -c 'cat /usr/src/paperless/data/deadline-results/<document-id>.json'
 ```
 
-### Production traffic and feedback logs
+### Production data and feedback logs
 
 ```bash
 kubectl exec -n ml deploy/online-features -- sh -c 'tail -n 20 /data/production_ingest.jsonl'
@@ -397,13 +328,13 @@ curl -X POST http://127.0.0.1:18005/predict \
   -H "Content-Type: application/json" \
   -d '{
     "document_id": "demo-1",
-    "ocr_text": "This agreement is effective as of April 20, 2026. Written notice must be delivered by May 20, 2026.",
+    "ocr_text": "This agreement is effective as of September 22, 2029. Written notice must be delivered by May 25, 2029.",
     "document_type": "contract",
     "filename": "demo.txt"
   }'
 ```
 
-### Online features feedback
+### Online-features feedback
 
 ```bash
 kubectl port-forward -n ml svc/online-features 18000:8000
@@ -447,64 +378,7 @@ kubectl create job --from=cronjob/model-promotion-gate model-promotion-manual -n
 kubectl create job --from=cronjob/release-promotion release-promotion-manual -n ml
 ```
 
-View retrain logs:
-
-```bash
-kubectl logs -n ml job/retrain-manual --tail=200
-```
-
-Decision files:
-
-```bash
-kubectl exec -n ml deploy/online-features -- sh -c 'ls -lah /data && echo --- && cat /data/retrain_decision.json && echo --- && cat /data/promotion_decision.json'
-```
-
-## Monitoring
-
-### Grafana
-
-Open one of these Grafana dashboards:
-
-- `Datanauts Overview`
-- `Datanauts Serving`
-- `Datanauts Data & Feedback`
-- `Datanauts Platform Health`
-
-Useful panels:
-
-- serving targets up
-- ONNX predictions/sec
-- online-features throughput
-- feedback/review activity
-- platform and monitoring memory utilization
-
-### Prometheus
-
-Prometheus is mainly used for:
-
-- Targets page
-- Alerts page
-- raw query debugging
-
-Useful queries:
-
-```promql
-up
-deadline_onnx_predictions_total
-online_features_ingest_requests_total
-```
-
-## Demo Prep
-
-Before a live presentation, run these helpers on the Chameleon node:
-
-```bash
-export KUBECONFIG=~/.kube/config
-./scripts/demo-readiness-check.sh
-./scripts/demo-links.sh
-```
-
-To avoid empty output from stale hard-coded job names, use:
+Inspect the latest matching job with helper scripts:
 
 ```bash
 ./scripts/latest-job-log.sh ml retrain 120
@@ -512,81 +386,71 @@ To avoid empty output from stale hard-coded job names, use:
 ./scripts/latest-job-log.sh ml data-quality 60
 ```
 
-These scripts resolve the newest matching Kubernetes Job automatically.
+Decision artifacts:
 
-## Current Known Limitations
-
-- PDF deadline extraction is not perfect.
-- Some non-contract documents are outside the strongest model domain.
-- The UI review flow currently uses Paperless tags, not custom accept/reject buttons.
-- Some deadline dates may still be partially normalized if the model returns poor date spans.
-
-## Troubleshooting
-
-### `kubectl` permission errors
-
-If you see:
-
-```text
-error loading config file "/etc/rancher/k3s/k3s.yaml": permission denied
+```bash
+kubectl exec -n ml deploy/online-features -- sh -c 'cat /data/retrain_decision.json && echo --- && cat /data/promotion_decision.json'
 ```
 
-run:
+## Monitoring
+
+### Grafana dashboards
+
+Main dashboards:
+
+- `Datanauts Overview`
+- `Datanauts Serving`
+- `Datanauts Data & Feedback`
+- `Datanauts Platform Health`
+
+Typical useful panels:
+
+- serving targets up
+- ONNX predictions/sec
+- feedback / review activity
+- ingest throughput
+- platform memory utilization
+- monitoring health
+
+### Prometheus
+
+Useful pages:
+
+- Targets
+- Alerts
+- Graph
+
+Useful queries:
+
+```promql
+up
+deadline_onnx_predictions_total
+online_features_ingest_requests_total
+sum(kube_deployment_status_replicas_unavailable{namespace=~"paperless|platform|monitoring|ml"})
+```
+
+## Demo Prep
+
+Before a live demo:
 
 ```bash
 export KUBECONFIG=~/.kube/config
+./scripts/demo-readiness-check.sh
+./scripts/demo-links.sh
 ```
 
-### Services up but old error pods still visible
+Recommended checks:
 
-Clean stale pods:
+1. Verify all core deployments are available.
+2. Confirm Grafana and Prometheus load.
+3. Confirm Paperless login works.
+4. Upload one known-good positive document.
+5. Confirm Paperless tags include `Deadline:*` and `Effective:*`.
+6. Confirm feedback logs and production ingest logs update.
 
-```bash
-kubectl delete pod -n paperless --field-selector=status.phase=Succeeded --ignore-not-found
-kubectl delete pod -n platform --field-selector=status.phase=Succeeded --ignore-not-found
-kubectl delete pod -n monitoring --field-selector=status.phase=Succeeded --ignore-not-found
-kubectl delete pod -n ml --field-selector=status.phase=Succeeded --ignore-not-found
-```
+## Notes
 
-### Local images missing after node restart
+- The UI review flow uses Paperless tags, not custom accept/reject buttons.
+- Date extraction is strongest on contract-style text and supported date formats.
+- If you rebuild serving or platform-automation images, re-import them into k3s with `./scripts/rebuild-k3s-images.sh`.
 
-Rebuild and re-import:
-
-```bash
-./scripts/rebuild-k3s-images.sh
-```
-
-Then restart the affected deployment:
-
-```bash
-kubectl rollout restart deployment/deadline-onnx-serving -n ml
-kubectl rollout restart deployment/online-features -n ml
-kubectl rollout restart deployment/paperless-ngx -n paperless
-```
-
-### Disk pressure on the node
-
-Check disk:
-
-```bash
-df -h /
-```
-
-This system depends on local image builds. If the root disk fills up, pods can be evicted and local images can disappear from k3s.
-
-## Quick Demo Checklist
-
-1. Show `kubectl get pods` for all namespaces.
-2. Open Paperless and upload a document.
-3. Show ML tags on the Paperless document.
-4. Add `Action:Accept` or `Action:Reject`.
-5. Show `/data/production_ingest.jsonl` and `/data/feedback_events.jsonl`.
-6. Show retrain/promotion CronJobs and decision files.
-7. Show Grafana `Datanauts Overview` and at least one role-specific dashboard.
-8. Show Prometheus targets or alerts.
-
-## Source of Truth
-
-Use branch `main`.
-
-If you are deploying this system again from scratch, clone `main`, create secrets, rebuild/import the images, and apply the Kubernetes manifests in the order described above.
