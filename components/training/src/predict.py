@@ -62,12 +62,38 @@ def _run_classifier(pipe, text):
     )[0]
 
 
-def _run_ner(pipe, text):
-    return pipe(
+def _chunk_text_for_ner(pipe, text):
+    max_length = _pipeline_max_length(pipe)
+    stride = max(32, min(128, max_length // 8))
+    encoded = pipe.tokenizer(
         text,
         truncation=True,
-        max_length=_pipeline_max_length(pipe),
+        max_length=max_length,
+        stride=stride,
+        return_overflowing_tokens=True,
+        add_special_tokens=True,
     )
+    input_ids = encoded.get("input_ids", [])
+    if input_ids and isinstance(input_ids[0], int):
+        input_ids = [input_ids]
+    if not input_ids:
+        return [text]
+    return [
+        pipe.tokenizer.decode(
+            ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
+        )
+        for ids in input_ids
+    ]
+
+
+def _run_ner(pipe, text):
+    outputs = []
+    for chunk in _chunk_text_for_ner(pipe, text):
+        outputs.extend(pipe(chunk))
+    return outputs
+
 
 
 def _resolve_date(text):
