@@ -9,22 +9,22 @@ data:
       - name: datanauts-platform
         rules:
           - alert: LiveDeadlineServingDown
-            expr: up{job="kubernetes-services", kubernetes_namespace="ml", kubernetes_service_name="deadline-onnx-serving"} == 0
+            expr: kube_deployment_status_replicas_available{namespace="ml", deployment="deadline-onnx-serving"} < 1
             for: 2m
             labels:
               severity: critical
             annotations:
               summary: Live deadline serving service is down
-              description: The ONNX live deadline serving service in the ml namespace has not been scrapeable for 2 minutes.
+              description: The ONNX live deadline serving deployment in the ml namespace has had no available replicas for 2 minutes.
 
           - alert: OnlineFeaturesDown
-            expr: up{job="kubernetes-services", kubernetes_namespace="ml", kubernetes_service_name="online-features"} == 0
+            expr: kube_deployment_status_replicas_available{namespace="ml", deployment="online-features"} < 1
             for: 2m
             labels:
               severity: critical
             annotations:
               summary: Online features service is down
-              description: The online feature service in the ml namespace has not been scrapeable for 2 minutes.
+              description: The online feature deployment in the ml namespace has had no available replicas for 2 minutes.
 
           - alert: MLNamespacePodsNotRunning
             expr: sum by (namespace) (kube_pod_status_phase{namespace="ml", phase=~"Pending|Failed|Unknown"}) > 0
@@ -73,13 +73,13 @@ data:
 
           - alert: PlatformServicesDown
             expr: |
-              up{job="kubernetes-services", kubernetes_namespace="platform", kubernetes_service_name=~"mlflow|minio"} == 0
+              min(kube_deployment_status_replicas_available{namespace="platform", deployment=~"mlflow|minio"}) < 1
             for: 2m
             labels:
               severity: critical
             annotations:
               summary: Shared platform service is down
-              description: MLflow or MinIO has not been scrapeable for at least 2 minutes.
+              description: MLflow or MinIO has had no available replicas for at least 2 minutes.
 
           - alert: NodeDiskPressure
             expr: kube_node_status_condition{condition="DiskPressure", status="true"} == 1
@@ -91,13 +91,13 @@ data:
               description: The Chameleon Kubernetes node has entered DiskPressure and may evict workloads.
 
           - alert: PodsStuckImagePull
-            expr: kube_pod_container_status_waiting_reason{namespace=~"ml|paperless|platform|monitoring", reason=~"ImagePullBackOff|ErrImagePull"} > 0
+            expr: kube_pod_container_status_waiting_reason{namespace=~"ml|paperless|platform|monitoring", pod=~"online-features.*|deadline-onnx-serving.*|paperless-ngx.*|mlflow.*|minio.*|grafana.*|prometheus.*", reason=~"ImagePullBackOff|ErrImagePull|ErrImageNeverPull"} > 0
             for: 5m
             labels:
               severity: warning
             annotations:
               summary: Pod is stuck pulling an image
-              description: One or more workload pods are stuck in ImagePullBackOff or ErrImagePull for over 5 minutes.
+              description: One or more core long-lived workload pods are stuck in image pull backoff for over 5 minutes.
 
           - alert: CoreWorkloadUnavailable
             expr: sum(kube_deployment_status_replicas_unavailable{namespace=~"paperless|platform|monitoring|ml", deployment=~"paperless-ngx|mlflow|minio|grafana|prometheus|online-features|deadline-onnx-serving"}) > 0

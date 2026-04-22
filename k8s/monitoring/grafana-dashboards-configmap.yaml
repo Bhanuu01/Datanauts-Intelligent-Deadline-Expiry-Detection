@@ -96,7 +96,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "min(up{job=\"kubernetes-services\",kubernetes_namespace=\"ml\",kubernetes_service_name=~\"deadline-onnx-serving|online-features\"})",
+              "expr": "min(kube_deployment_status_replicas_available{namespace=\"ml\",deployment=~\"online-features|deadline-onnx-serving\"} > 0)",
               "legendFormat": "__auto",
               "range": true,
               "refId": "A"
@@ -693,7 +693,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "min(up{job=\"kubernetes-services\",kubernetes_namespace=\"ml\",kubernetes_service_name=~\"deadline-onnx-serving|online-features\"})",
+              "expr": "min(kube_deployment_status_replicas_available{namespace=\"ml\",deployment=~\"online-features|deadline-onnx-serving\"} > 0)",
               "range": true,
               "refId": "A"
             }
@@ -1477,7 +1477,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "min(up{job=\"kubernetes-services\",kubernetes_namespace=\"platform\",kubernetes_service_name=~\"mlflow|minio\"})",
+              "expr": "min(kube_deployment_status_replicas_available{namespace=\"platform\",deployment=~\"mlflow|minio\"} > 0)",
               "range": true,
               "refId": "A"
             }
@@ -1551,7 +1551,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "min(up{job=\"kubernetes-services\",kubernetes_namespace=\"monitoring\",kubernetes_service_name=~\"grafana|prometheus\"})",
+              "expr": "min(kube_deployment_status_replicas_available{namespace=\"monitoring\",deployment=~\"grafana|prometheus\"} > 0)",
               "range": true,
               "refId": "A"
             }
