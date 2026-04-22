@@ -130,6 +130,7 @@ def normalize_entity_text(value: str) -> str:
     cleaned = re.sub(r"\s+", " ", (value or "").strip())
     cleaned = re.sub(r"\s+([,./-])", r"\1", cleaned)
     cleaned = cleaned.replace("Sept.", "Sep.").replace("sept.", "sep.")
+    cleaned = re.sub(r"\bsept\b", "sep", cleaned, flags=re.IGNORECASE)
     return cleaned
 
 
@@ -147,6 +148,31 @@ def is_valid_date_candidate(value: str) -> bool:
     return bool(DATE_RE.search(candidate))
 
 
+def date_candidate_rank(value: str) -> tuple[int, int]:
+    candidate = normalize_entity_text(value)
+    has_month_name = bool(
+        re.search(
+            r"\b(?:January|February|March|April|May|June|July|August|"
+            r"September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\b",
+            candidate,
+            re.IGNORECASE,
+        )
+    )
+    has_day_year = bool(re.search(r"\b\d{1,2},?\s+\d{4}\b", candidate))
+    has_iso = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", candidate))
+    has_slash = bool(re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", candidate))
+    score = 0
+    if has_month_name and has_day_year:
+        score += 4
+    if has_iso:
+        score += 3
+    if has_slash:
+        score += 2
+    if re.search(r"\b\d{4}\b", candidate):
+        score += 1
+    return (score, len(candidate))
+
+
 def extract_date_candidates(sentence: str, ner_results: List[Dict[str, Any]]) -> List[str]:
     ner_candidates = []
     for entity in ner_results:
@@ -154,12 +180,11 @@ def extract_date_candidates(sentence: str, ner_results: List[Dict[str, Any]]) ->
         if is_valid_date_candidate(text):
             ner_candidates.append(text)
 
-    if ner_candidates:
-        return list(dict.fromkeys(ner_candidates))
-
     regex_candidates = [match.group(0).strip(" .,;:") for match in DATE_RE.finditer(sentence)]
     regex_candidates = [normalize_entity_text(value) for value in regex_candidates if is_valid_date_candidate(value)]
-    return list(dict.fromkeys(regex_candidates))
+    merged = list(dict.fromkeys(regex_candidates + ner_candidates))
+    merged.sort(key=date_candidate_rank, reverse=True)
+    return merged
 
 
 @app.get("/health")

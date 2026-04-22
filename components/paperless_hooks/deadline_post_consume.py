@@ -126,6 +126,8 @@ def normalize_deadline_date(raw_date: str) -> str:
     cleaned = raw_date.strip()
     if not cleaned:
         return ""
+    cleaned = re.sub(r"\bsept\b", "sep", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.replace("Sept.", "Sep.").replace("sept.", "sep.")
     lowered = cleaned.lower()
     if lowered in {"year", "month", "day"}:
         return ""
@@ -135,7 +137,7 @@ def normalize_deadline_date(raw_date: str) -> str:
         return ""
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", cleaned):
         return cleaned
-    for fmt in ("%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
         try:
             from datetime import datetime
 
