@@ -14,8 +14,9 @@ echo "=== Step 2: Create namespaces ==="
 kubectl apply -f k8s/namespace-paperless.yaml
 kubectl apply -f k8s/namespace-platform.yaml
 kubectl apply -f k8s/namespace-ml.yaml
+kubectl apply -f k8s/monitoring/namespace.yaml
 
-echo "=== Step 3: Create secrets (edit the script first!) ==="
+echo "=== Step 3: Create runtime secrets ==="
 bash scripts/create-secrets.sh
 
 echo "=== Step 4: Deploy Paperless stack ==="
@@ -24,10 +25,15 @@ kubectl apply -f k8s/paperless/
 echo "=== Step 5: Deploy Platform stack ==="
 kubectl apply -f k8s/platform/
 
+echo "=== Step 6: Deploy Monitoring stack ==="
+kubectl apply -k k8s/monitoring/
+
 echo ""
 echo "=== Waiting for pods to come up (this takes 2-3 minutes) ==="
 kubectl rollout status deployment/paperless-ngx -n paperless --timeout=300s
 kubectl rollout status deployment/mlflow -n platform --timeout=300s
+kubectl rollout status deployment/prometheus -n monitoring --timeout=300s
+kubectl rollout status deployment/grafana -n monitoring --timeout=300s
 
 echo ""
 echo "=== All done! ==="

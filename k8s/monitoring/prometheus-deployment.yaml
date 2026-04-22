@@ -49,4 +49,5 @@ spec:
           configMap:
             name: prometheus-alerts
         - name: prometheus-data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: prometheus-pvc

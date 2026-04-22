@@ -23,13 +23,14 @@ Main flow:
 3. A post-consume hook calls the ONNX deadline detection service.
 4. The prediction result is saved to the shared volume.
 5. Paperless adds ML tags such as:
-   - `ML Deadline Detected`
-   - `ML Deadline Date: YYYY-MM-DD`
-   - `ML Review Pending`
-   - `ML Event: Effective`
+   - `Type:Deadline`
+   - `Deadline:YYYY-MM-DD`
+   - `Type:Effective`
+   - `Effective:YYYY-MM-DD`
+   - `Status:Review Needed`
 6. Users can review the result in Paperless using:
-   - `ML Feedback Correct`
-   - `ML Feedback Wrong`
+   - `Action:Accept`
+   - `Action:Reject`
 7. Feedback and production traffic are logged for retraining.
 8. Retraining and model promotion jobs run inside Kubernetes.
 
@@ -130,11 +131,30 @@ bash scripts/create-secrets.sh
 This creates:
 
 - `paperless-secrets` in `paperless`
-- mirrored `paperless-secrets` in `ml`
 - `platform-secrets` in `platform`
-- mirrored `platform-secrets` in `ml`
+- `monitoring-secrets` in `monitoring`
+- mirrored runtime copies of `paperless-secrets` and `platform-secrets` in `ml`
 
-The script prints the generated Paperless and MinIO passwords.
+By default the script generates strong random values and does not print them.
+If you need to persist the generated credentials outside the cluster, use:
+
+```bash
+SAVE_CREDENTIALS_FILE=~/datanauts-secrets.env bash scripts/create-secrets.sh
+```
+
+To print them explicitly for one run:
+
+```bash
+SHOW_GENERATED_SECRETS=true bash scripts/create-secrets.sh
+```
+
+If you are using Bitnami Sealed Secrets for the source namespaces, apply the
+sealed manifests first and then refresh the runtime copies used by ML jobs:
+
+```bash
+kubectl apply -k k8s/sealed-secrets/
+USE_EXISTING_SOURCE_SECRETS=true bash scripts/create-secrets.sh
+```
 
 ## Build and Import Local Images
 
@@ -228,43 +248,49 @@ Current Chameleon deployment:
 
 If you deploy on another node, replace the IP with your node’s public address.
 
-## Credentials
+## Access and Credentials
 
-Current deployment credentials:
+Public service endpoints:
 
 ### Paperless
 
 - URL: [http://129.114.27.190](http://129.114.27.190)
-- Username: `admin`
-- Password: `e1fdbfca3df64f9b96c7b30b`
 
 ### MLflow
 
 - URL: [http://129.114.27.190:30500](http://129.114.27.190:30500)
-- No separate login configured
 
 ### MinIO Console
 
 - URL: [http://129.114.27.190:30901](http://129.114.27.190:30901)
-- Username: `mlflow`
-- Password: `b64cff59b24f5e848165dc14a928e8ae`
 
 ### MinIO S3 API
 
 - Endpoint: [http://129.114.27.190:30900](http://129.114.27.190:30900)
-- Access key: `mlflow`
-- Secret key: `b64cff59b24f5e848165dc14a928e8ae`
 
 ### Grafana
 
 - URL: [http://129.114.27.190/grafana/login](http://129.114.27.190/grafana/login)
-- Username: `admin`
-- Password: `admin`
 
 ### Prometheus
 
 - URL: [http://129.114.27.190/prometheus/graph](http://129.114.27.190/prometheus/graph)
-- No separate login configured
+
+Retrieve credentials from Kubernetes Secrets instead of storing them in documentation. Example commands:
+
+```bash
+kubectl get secret -n paperless paperless-secrets -o yaml
+kubectl get secret -n platform platform-secrets -o yaml
+kubectl get secret -n monitoring monitoring-secrets -o yaml
+```
+
+To print decoded values only when needed:
+
+```bash
+kubectl get secret -n paperless paperless-secrets -o jsonpath='{.data.PAPERLESS_ADMIN_PASSWORD}' | base64 --decode && echo
+kubectl get secret -n platform platform-secrets -o jsonpath='{.data.MINIO_ROOT_PASSWORD}' | base64 --decode && echo
+kubectl get secret -n monitoring monitoring-secrets -o jsonpath='{.data.GRAFANA_ADMIN_PASSWORD}' | base64 --decode && echo
+```
 
 ## Internal Service Endpoints
 
@@ -324,15 +350,16 @@ kubectl logs -n paperless deploy/paperless-ngx --tail=150
 
 Expected ML tags on a positive example:
 
-- `ML Deadline Detected`
-- `ML Deadline Date: YYYY-MM-DD`
-- `ML Review Pending`
-- `ML Event: Effective`
+- `Type:Deadline`
+- `Deadline:YYYY-MM-DD`
+- `Type:Effective`
+- `Effective:YYYY-MM-DD`
+- `Status:Review Needed`
 
 Feedback tags available in the tag picker:
 
-- `ML Feedback Correct`
-- `ML Feedback Wrong`
+- `Action:Accept`
+- `Action:Reject`
 
 ### Result files
 
@@ -552,7 +579,7 @@ This system depends on local image builds. If the root disk fills up, pods can b
 1. Show `kubectl get pods` for all namespaces.
 2. Open Paperless and upload a document.
 3. Show ML tags on the Paperless document.
-4. Add `ML Feedback Correct` or `ML Feedback Wrong`.
+4. Add `Action:Accept` or `Action:Reject`.
 5. Show `/data/production_ingest.jsonl` and `/data/feedback_events.jsonl`.
 6. Show retrain/promotion CronJobs and decision files.
 7. Show Grafana `Datanauts Overview` and at least one role-specific dashboard.

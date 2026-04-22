@@ -15,6 +15,6 @@ Prometheus:     http://${PUBLIC_IP}/prometheus/graph
 Logins
 ------
 Paperless: admin / <paperless admin password from secret>
-Grafana:   admin / admin
+Grafana:   admin / <monitoring secret password>
 MinIO:     mlflow / <platform secret password>
 EOF

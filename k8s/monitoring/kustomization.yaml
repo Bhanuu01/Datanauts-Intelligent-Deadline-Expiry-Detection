@@ -4,6 +4,7 @@ resources:
   - kube-state-metrics.yaml
   - prometheus-configmap.yaml
   - prometheus-alerts-configmap.yaml
+  - prometheus-pvc.yaml
   - prometheus-deployment.yaml
   - prometheus-service.yaml
   - prometheus-ingress.yaml

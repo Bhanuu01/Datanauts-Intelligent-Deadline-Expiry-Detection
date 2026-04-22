@@ -1,0 +1,3 @@
+resources:
+  - paperless-sealed-secret.yaml
+  - platform-sealed-secret.yaml
