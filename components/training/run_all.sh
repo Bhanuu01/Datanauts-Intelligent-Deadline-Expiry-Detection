@@ -58,10 +58,10 @@ run_variant train_classifier.py roberta_clf_v4
 run_variant train_classifier.py roberta_clf_v5
 run_variant train_classifier.py roberta_clf_v6
 
-# ── End-to-end evaluation (best models from MLflow) ───────────────────────────
+# ── End-to-end evaluation (override with NER_MODEL_PATH / CLF_MODEL_PATH) ─────
 log "--- End-to-End Evaluation ---"
-NER_MODEL="${NER_MODEL_PATH:-/tmp/deadline-ner/bert_ner_v5}"
-CLF_MODEL="${CLF_MODEL_PATH:-/tmp/deadline-clf/roberta_clf_v5}"
+NER_MODEL="${NER_MODEL_PATH:-/tmp/deadline-ner-bert_ner_v4}"
+CLF_MODEL="${CLF_MODEL_PATH:-/tmp/deadline-clf-roberta_clf_v3}"
 if [ -d "$NER_MODEL" ] && [ -d "$CLF_MODEL" ]; then
   python "$ROOT/src/evaluate.py" \
     --clf_model "$CLF_MODEL" \

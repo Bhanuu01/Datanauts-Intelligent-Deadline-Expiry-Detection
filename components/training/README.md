@@ -12,8 +12,8 @@ Raw contract text (OCR / Paperless-ngx)
         ▼
  build_dataset.py          ← CUAD dataset → 46K labeled sentences
         │
-        ├──► train_ner.py          ← BERT token classifier (7-class BIO)
-        └──► train_classifier.py   ← RoBERTa sequence classifier (4-class)
+        ├──► train_ner.py          ← BERT token classifier (9-label BIO)
+        └──► train_classifier.py   ← RoBERTa sequence classifier (6-class)
                                           │
                               New contract at inference time
                                           │
@@ -33,8 +33,14 @@ Raw contract text (OCR / Paperless-ngx)
 
 | Model | Base | Task | Labels | Test F1 |
 |-------|------|------|--------|---------|
-| `bert_ner_v5` | `dslim/bert-base-NER` | Token classification (NER) | 9 | 0.67 |
-| `roberta_clf_v5` | `roberta-base` | Sequence classification (CLF) | 6 | 0.80 |
+| `bert_ner_v4` | `dslim/bert-base-NER` | Token classification (NER) | 9 | 0.6471 |
+| `roberta_clf_v3` | `roberta-base` | Sequence classification (CLF) | 6 | 0.6101 |
+
+Current best successful runs in the Chameleon MLflow deployment as of April 20, 2026:
+- NER: `bert_ner_v4` (`test_f1=0.6471`)
+- Classifier: `roberta_clf_v3` (`test_f1=0.6101`)
+
+These are the safest defaults for reruns and automated retraining. Later `v5`/`v6` experiments exist in MLflow, but the strongest completed runs were still `bert_ner_v4` and `roberta_clf_v3` when this README was updated.
 
 ### NER Labels (9 BIO tags)
 `O` · `B-EXP_DATE` · `I-EXP_DATE` · `B-START_DATE` · `I-START_DATE` · `B-DURATION` · `I-DURATION` · `B-NOTICE_DATE` · `I-NOTICE_DATE`
@@ -125,14 +131,14 @@ docker run --rm --gpus all \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/outputs:/tmp \
   deadline-training:phase2 \
-  python src/train_ner.py --model bert_ner_v5
+  python src/train_ner.py --model bert_ner_v4
 
 # Classifier (~2 min on H100)
 docker run --rm --gpus all \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/outputs:/tmp \
   deadline-training:phase2 \
-  python src/train_classifier.py --model roberta_clf_v5
+  python src/train_classifier.py --model roberta_clf_v3
 ```
 
 ### 5. Run inference
@@ -142,8 +148,8 @@ docker run --rm \
   -v $(pwd)/outputs:/tmp \
   deadline-training:phase2 \
   python src/predict.py \
-    --clf_model /tmp/deadline-clf-roberta_clf_v5 \
-    --ner_model /tmp/deadline-ner-bert_ner_v5 \
+    --clf_model /tmp/deadline-clf-roberta_clf_v3 \
+    --ner_model /tmp/deadline-ner-bert_ner_v4 \
     --contract_id "contract_001" \
     --sentences \
       "This Agreement shall expire on December 31, 2025." \
@@ -197,8 +203,8 @@ docker run --rm \
   -v $(pwd)/outputs:/tmp \
   deadline-training:phase2 \
   python src/evaluate.py \
-    --clf_model /tmp/deadline-clf-roberta_clf_v5 \
-    --ner_model /tmp/deadline-ner-bert_ner_v5 \
+    --clf_model /tmp/deadline-clf-roberta_clf_v3 \
+    --ner_model /tmp/deadline-ner-bert_ner_v4 \
     --cross_domain_samples samples/cross_domain_sample.json
 ```
 
@@ -220,11 +226,13 @@ All training runs log to MLflow automatically:
 
 Experiments: `deadline-detection-ner` · `deadline-detection-classifier`
 
+Each saved model directory now also includes `mlflow_run.json`, which lets the retraining and promotion flow tie packaged artifacts back to the exact successful MLflow run that produced them.
+
 ---
 
 ## Feedback Loop
 
-Sentences where `confidence < 0.7` are written to a review queue by `feedback_loop.py`. When 100 uncertain examples accumulate, it triggers a retrain signal. This enables continuous improvement as the model encounters edge cases in production.
+Sentences where `confidence < 0.7` are written to a review queue by `feedback_loop.py`. In the integrated deployment, scheduled retraining runs through `components/platform_automation/run_retrain_cycle.py`, and the Kubernetes retrain job currently targets `bert_ner_v4` and `roberta_clf_v3` as the default candidate configs.
 
 ---
 
