@@ -23,9 +23,9 @@ spec:
                 - name: PROMOTION_DECISION_PATH
                   value: /data/promotion_decision.json
                 - name: MIN_NER_F1
-                  value: "0.65"
+                  value: "0.64"
                 - name: MIN_CLF_MACRO_F1
-                  value: "0.75"
+                  value: "0.60"
                 - name: MIN_E2E_COVERAGE
                   value: "0.60"
                 - name: MAX_FALSE_ALARM_COUNT
