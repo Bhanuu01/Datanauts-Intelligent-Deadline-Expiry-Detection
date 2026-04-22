@@ -30,6 +30,13 @@ def _pipeline_device():
     return 0 if torch.cuda.is_available() else -1
 
 
+def _pipeline_max_length(pipe):
+    max_length = getattr(pipe.tokenizer, "model_max_length", 512)
+    if not isinstance(max_length, int) or max_length <= 0 or max_length > 100000:
+        return 512
+    return max_length
+
+
 @lru_cache(maxsize=8)
 def _load_pipelines(clf_model_path, ner_model_path, device):
     clf_pipe = pipeline(
@@ -45,6 +52,22 @@ def _load_pipelines(clf_model_path, ner_model_path, device):
         device=device,
     )
     return clf_pipe, ner_pipe
+
+
+def _run_classifier(pipe, text):
+    return pipe(
+        text,
+        truncation=True,
+        max_length=_pipeline_max_length(pipe),
+    )[0]
+
+
+def _run_ner(pipe, text):
+    return pipe(
+        text,
+        truncation=True,
+        max_length=_pipeline_max_length(pipe),
+    )
 
 
 def _resolve_date(text):
@@ -114,7 +137,7 @@ def predict(
 
     groups = {}  # event_type → [(sentence, confidence, all_scores)]
     for sent in sentences:
-        results = clf_pipe(sent)[0]
+        results = _run_classifier(clf_pipe, sent)
         best    = max(results, key=lambda x: x["score"])
         label   = best["label"].lower()
         score   = best["score"]
@@ -143,7 +166,7 @@ def predict(
         deadline_type   = "computable"
 
         for sent, _, _ in items:
-            ner_out  = ner_pipe(sent)
+            ner_out  = _run_ner(ner_pipe, sent)
             entities = _extract_entities(ner_out, allowed)
             for ent in entities:
                 if ent["entity_type"] in ("EXP_DATE", "START_DATE", "NOTICE_DATE"):
