@@ -23,13 +23,14 @@ Main flow:
 3. A post-consume hook calls the ONNX deadline detection service.
 4. The prediction result is saved to the shared volume.
 5. Paperless adds ML tags such as:
-   - `ML Deadline Detected`
-   - `ML Deadline Date: YYYY-MM-DD`
-   - `ML Review Pending`
-   - `ML Event: Effective`
+   - `Type:Deadline`
+   - `Deadline:YYYY-MM-DD`
+   - `Type:Effective`
+   - `Effective:YYYY-MM-DD`
+   - `Status:Review Needed`
 6. Users can review the result in Paperless using:
-   - `ML Feedback Correct`
-   - `ML Feedback Wrong`
+   - `Action:Accept`
+   - `Action:Reject`
 7. Feedback and production traffic are logged for retraining.
 8. Retraining and model promotion jobs run inside Kubernetes.
 
@@ -134,7 +135,7 @@ This creates:
 - `platform-secrets` in `platform`
 - mirrored `platform-secrets` in `ml`
 
-The script prints the generated Paperless and MinIO passwords.
+Store the generated credentials securely after running the script. They are injected into Kubernetes Secrets and are not intended to be committed to Git.
 
 ## Build and Import Local Images
 
@@ -220,43 +221,47 @@ Current Chameleon deployment:
 
 If you deploy on another node, replace the IP with your node’s public address.
 
-## Credentials
+## Access and Credentials
 
-Current deployment credentials:
+Public service endpoints:
 
 ### Paperless
 
 - URL: [http://129.114.27.190](http://129.114.27.190)
-- Username: `admin`
-- Password: `e1fdbfca3df64f9b96c7b30b`
 
 ### MLflow
 
 - URL: [http://129.114.27.190:30500](http://129.114.27.190:30500)
-- No separate login configured
 
 ### MinIO Console
 
 - URL: [http://129.114.27.190:30901](http://129.114.27.190:30901)
-- Username: `mlflow`
-- Password: `b64cff59b24f5e848165dc14a928e8ae`
 
 ### MinIO S3 API
 
 - Endpoint: [http://129.114.27.190:30900](http://129.114.27.190:30900)
-- Access key: `mlflow`
-- Secret key: `b64cff59b24f5e848165dc14a928e8ae`
 
 ### Grafana
 
 - URL: [http://129.114.27.190/grafana/login](http://129.114.27.190/grafana/login)
-- Username: `admin`
-- Password: `admin`
 
 ### Prometheus
 
 - URL: [http://129.114.27.190/prometheus/graph](http://129.114.27.190/prometheus/graph)
-- No separate login configured
+
+Retrieve credentials from Kubernetes Secrets instead of storing them in documentation. Example commands:
+
+```bash
+kubectl get secret -n paperless paperless-secrets -o yaml
+kubectl get secret -n platform platform-secrets -o yaml
+```
+
+To print a decoded value safely when needed:
+
+```bash
+kubectl get secret -n paperless paperless-secrets -o jsonpath='{.data.PAPERLESS_ADMIN_PASSWORD}' | base64 --decode && echo
+kubectl get secret -n platform platform-secrets -o jsonpath='{.data.MINIO_ROOT_PASSWORD}' | base64 --decode && echo
+```
 
 ## Internal Service Endpoints
 
