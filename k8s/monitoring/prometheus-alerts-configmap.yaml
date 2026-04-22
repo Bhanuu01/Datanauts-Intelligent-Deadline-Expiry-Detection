@@ -53,6 +53,24 @@ data:
               summary: ONNX serving uncertain predictions spiked
               description: The ONNX live serving path produced more than 5 uncertain predictions in the last 15 minutes.
 
+          - alert: OnnxServingLatencyHigh
+            expr: histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_inference_latency_seconds_bucket[5m]))) > 0.5
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: ONNX serving latency is elevated
+              description: The ONNX live serving path has sustained p95 inference latency above 500ms for 10 minutes.
+
+          - alert: OnlineFeaturesRedisErrors
+            expr: increase(online_features_redis_errors_total[15m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Online features encountered Redis errors
+              description: The online features service has emitted Redis write/read errors in the last 15 minutes.
+
           - alert: PlatformServicesDown
             expr: |
               up{job="kubernetes-services", kubernetes_namespace="platform", kubernetes_service_name=~"mlflow|minio"} == 0
@@ -80,6 +98,24 @@ data:
             annotations:
               summary: Pod is stuck pulling an image
               description: One or more workload pods are stuck in ImagePullBackOff or ErrImagePull for over 5 minutes.
+
+          - alert: CoreWorkloadUnavailable
+            expr: sum(kube_deployment_status_replicas_unavailable{namespace=~"paperless|platform|monitoring|ml", deployment=~"paperless-ngx|mlflow|minio|grafana|prometheus|online-features|deadline-onnx-serving"}) > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: A core workload has unavailable replicas
+              description: One or more core Paperless, platform, monitoring, or ML deployments have unavailable replicas for at least 5 minutes.
+
+          - alert: PodRestartsHigh
+            expr: sum by (namespace, pod) (increase(kube_pod_container_status_restarts_total{namespace=~"paperless|platform|monitoring|ml"}[15m])) > 2
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Pod restart count is elevated
+              description: A workload pod has restarted more than twice in 15 minutes, which may indicate instability.
 
           - alert: SharedPlatformMemoryHigh
             expr: |
