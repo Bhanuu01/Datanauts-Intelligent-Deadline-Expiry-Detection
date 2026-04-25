@@ -30,6 +30,13 @@ def _pipeline_device():
     return 0 if torch.cuda.is_available() else -1
 
 
+def _pipeline_max_length(pipe):
+    max_length = getattr(pipe.tokenizer, "model_max_length", 512)
+    if not isinstance(max_length, int) or max_length <= 0 or max_length > 100000:
+        return 512
+    return max_length
+
+
 @lru_cache(maxsize=8)
 def _load_pipelines(clf_model_path, ner_model_path, device):
     clf_pipe = pipeline(
@@ -45,6 +52,48 @@ def _load_pipelines(clf_model_path, ner_model_path, device):
         device=device,
     )
     return clf_pipe, ner_pipe
+
+
+def _run_classifier(pipe, text):
+    return pipe(
+        text,
+        truncation=True,
+        max_length=_pipeline_max_length(pipe),
+    )[0]
+
+
+def _chunk_text_for_ner(pipe, text):
+    max_length = _pipeline_max_length(pipe)
+    stride = max(32, min(128, max_length // 8))
+    encoded = pipe.tokenizer(
+        text,
+        truncation=True,
+        max_length=max_length,
+        stride=stride,
+        return_overflowing_tokens=True,
+        add_special_tokens=True,
+    )
+    input_ids = encoded.get("input_ids", [])
+    if input_ids and isinstance(input_ids[0], int):
+        input_ids = [input_ids]
+    if not input_ids:
+        return [text]
+    return [
+        pipe.tokenizer.decode(
+            ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
+        )
+        for ids in input_ids
+    ]
+
+
+def _run_ner(pipe, text):
+    outputs = []
+    for chunk in _chunk_text_for_ner(pipe, text):
+        outputs.extend(pipe(chunk))
+    return outputs
+
 
 
 def _resolve_date(text):
@@ -114,7 +163,7 @@ def predict(
 
     groups = {}  # event_type → [(sentence, confidence, all_scores)]
     for sent in sentences:
-        results = clf_pipe(sent)[0]
+        results = _run_classifier(clf_pipe, sent)
         best    = max(results, key=lambda x: x["score"])
         label   = best["label"].lower()
         score   = best["score"]
@@ -143,7 +192,7 @@ def predict(
         deadline_type   = "computable"
 
         for sent, _, _ in items:
-            ner_out  = ner_pipe(sent)
+            ner_out  = _run_ner(ner_pipe, sent)
             entities = _extract_entities(ner_out, allowed)
             for ent in entities:
                 if ent["entity_type"] in ("EXP_DATE", "START_DATE", "NOTICE_DATE"):
