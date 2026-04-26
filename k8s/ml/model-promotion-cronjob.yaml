@@ -13,7 +13,7 @@ spec:
           containers:
             - name: model-promotion-gate
               image: ghcr.io/bhanuu01/datanauts-platform-automation:latest
-              imagePullPolicy: IfNotPresent
+              imagePullPolicy: Always
               command: ["python", "/app/components/platform_automation/evaluate_and_promote.py"]
               env:
                 - name: EVALUATION_METRICS_PATH

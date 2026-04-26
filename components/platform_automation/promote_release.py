@@ -80,6 +80,7 @@ def build_release_plan(promotion_decision: Dict[str, Any], release_state: Dict[s
         "target_selector": {"app": stage_to_app[next_stage]},
         "candidate_version": promotion_decision.get("candidate_version"),
         "candidate_paths": promotion_decision.get("candidate_paths", {}),
+        "candidate_quantized_paths": promotion_decision.get("candidate_quantized_paths", {}),
         "current_version": release_state.get("current_version"),
         "previous_version": release_state.get("previous_version"),
         "metrics": {
@@ -106,7 +107,15 @@ def canonicalize_current_release(release_state: Dict[str, Any], canonical_root: 
     current_release_root = releases_root / current_version
     ner_release_root = current_release_root / "ner"
     clf_release_root = current_release_root / "classifier"
-    if ner_release_root.exists() and clf_release_root.exists():
+    quantized_release_root = current_release_root / "onnx_quantized_model"
+    quantized_clf_release_root = quantized_release_root / "onnx_quantized_clf"
+    quantized_ner_release_root = quantized_release_root / "onnx_quantized_ner"
+    if (
+        ner_release_root.exists()
+        and clf_release_root.exists()
+        and quantized_clf_release_root.exists()
+        and quantized_ner_release_root.exists()
+    ):
         return
 
     current_release_root.mkdir(parents=True, exist_ok=True)
@@ -114,6 +123,18 @@ def canonicalize_current_release(release_state: Dict[str, Any], canonical_root: 
         shutil.copytree(canonical_root / "ner", ner_release_root, dirs_exist_ok=True)
     if (canonical_root / "classifier").exists():
         shutil.copytree(canonical_root / "classifier", clf_release_root, dirs_exist_ok=True)
+    if (canonical_root / "onnx_quantized_model" / "onnx_quantized_clf").exists():
+        shutil.copytree(
+            canonical_root / "onnx_quantized_model" / "onnx_quantized_clf",
+            quantized_clf_release_root,
+            dirs_exist_ok=True,
+        )
+    if (canonical_root / "onnx_quantized_model" / "onnx_quantized_ner").exists():
+        shutil.copytree(
+            canonical_root / "onnx_quantized_model" / "onnx_quantized_ner",
+            quantized_ner_release_root,
+            dirs_exist_ok=True,
+        )
 
 
 def patch_live_service(namespace: str, service_name: str, selector: Dict[str, str]) -> None:
@@ -172,14 +193,23 @@ def apply_release_plan(release_plan: Dict[str, Any], release_state: Dict[str, An
 
     if release_plan["action"] == "promote":
         candidate_paths = release_plan.get("candidate_paths", {})
+        candidate_quantized_paths = release_plan.get("candidate_quantized_paths", {})
         ner_source = Path(candidate_paths.get("ner", ""))
         clf_source = Path(candidate_paths.get("classifier", ""))
+        quantized_ner_source = Path(candidate_quantized_paths.get("ner", ""))
+        quantized_clf_source = Path(candidate_quantized_paths.get("classifier", ""))
         if not ner_source.exists() or not clf_source.exists():
             raise FileNotFoundError("Candidate model paths are missing; cannot promote release")
+        if not quantized_ner_source.exists() or not quantized_clf_source.exists():
+            raise FileNotFoundError("Candidate ONNX model paths are missing; cannot promote release")
 
         previous_version = release_state.get("current_version")
         replace_directory(ner_source, canonical_root / "ner")
         replace_directory(clf_source, canonical_root / "classifier")
+        onnx_root = canonical_root / "onnx_quantized_model"
+        onnx_root.mkdir(parents=True, exist_ok=True)
+        replace_directory(quantized_clf_source, onnx_root / "onnx_quantized_clf")
+        replace_directory(quantized_ner_source, onnx_root / "onnx_quantized_ner")
         release_state["previous_version"] = previous_version
         release_state["current_version"] = release_plan["candidate_version"]
         release_state["current_stage"] = release_plan["next_stage"]
@@ -192,6 +222,14 @@ def apply_release_plan(release_plan: Dict[str, Any], release_state: Dict[str, An
         rollback_root = releases_root / previous_version
         replace_directory(rollback_root / "ner", canonical_root / "ner")
         replace_directory(rollback_root / "classifier", canonical_root / "classifier")
+        replace_directory(
+            rollback_root / "onnx_quantized_model" / "onnx_quantized_clf",
+            canonical_root / "onnx_quantized_model" / "onnx_quantized_clf",
+        )
+        replace_directory(
+            rollback_root / "onnx_quantized_model" / "onnx_quantized_ner",
+            canonical_root / "onnx_quantized_model" / "onnx_quantized_ner",
+        )
         release_state["current_version"] = previous_version
         release_state["current_stage"] = release_plan["next_stage"]
         release_state["last_action"] = "rollback"

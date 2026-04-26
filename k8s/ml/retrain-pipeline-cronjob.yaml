@@ -9,12 +9,11 @@ spec:
     spec:
       template:
         spec:
-          runtimeClassName: nvidia
           restartPolicy: OnFailure
           containers:
             - name: retrain-pipeline
               image: ghcr.io/bhanuu01/datanauts-platform-automation:latest
-              imagePullPolicy: IfNotPresent
+              imagePullPolicy: Always
               env:
                 - name: FEEDBACK_METRICS_PATH
                   value: /data/feedback_metrics.json
@@ -54,6 +53,8 @@ spec:
                   value: http://minio.platform.svc.cluster.local:9000
                 - name: CROSS_DOMAIN_SAMPLES_PATH
                   value: /app/components/training/samples/cross_domain_sample.json
+                - name: PUBLISH_CANONICAL_MODEL
+                  value: "false"
                 - name: AWS_ACCESS_KEY_ID
                   value: mlflow
                 - name: AWS_SECRET_ACCESS_KEY
@@ -63,13 +64,11 @@ spec:
                       key: MINIO_ROOT_PASSWORD
               resources:
                 requests:
-                  cpu: "2000m"
-                  memory: "8Gi"
-                  nvidia.com/gpu: "1"
+                  cpu: "1000m"
+                  memory: "6Gi"
                 limits:
                   cpu: "4000m"
-                  memory: "16Gi"
-                  nvidia.com/gpu: "1"
+                  memory: "12Gi"
               volumeMounts:
                 - name: retrain-data
                   mountPath: /data

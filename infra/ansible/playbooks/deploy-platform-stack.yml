@@ -141,6 +141,38 @@
           - -k
           - "{{ rendered_k8s_root }}/release"
 
+    - name: Remove any previous bootstrap training job
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - delete
+          - job/model-bootstrap
+          - -n
+          - ml
+          - --ignore-not-found=true
+
+    - name: Apply bootstrap training job
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - apply
+          - -f
+          - "{{ rendered_k8s_root }}/ml/model-bootstrap-job.yaml"
+
+    - name: Wait for bootstrap training job to complete
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - wait
+          - --for=condition=complete
+          - job/model-bootstrap
+          - -n
+          - ml
+          - --timeout=3600s
+
     - name: Wait for deployed workloads to roll out
       ansible.builtin.command:
         argv:

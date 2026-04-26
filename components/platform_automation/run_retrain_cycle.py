@@ -13,16 +13,40 @@ from typing import Dict
 from typing import List
 
 from mlflow.tracking import MlflowClient
+from transformers import AutoModelForSequenceClassification
+from transformers import AutoModelForTokenClassification
+from transformers import AutoTokenizer
 
 
 DEFAULT_METRICS_PATH = "/tmp/feedback_metrics.json"
 DEFAULT_OUTPUT_PATH = "/tmp/retrain_decision.json"
 DEFAULT_EVAL_PATH = "/tmp/evaluation_metrics.json"
 DEFAULT_RELEASE_ROOT = "/data/model-releases"
+DEFAULT_CANONICAL_ROOT = "/data"
+DEFAULT_BOOTSTRAP_DATASET_ROOT = "/app/components/data/batch_pipeline/output/v20260419_182857"
 DEFAULT_PAPERLESS_URL = "http://paperless-ngx.paperless.svc.cluster.local:8000"
 DEFAULT_FEEDBACK_CHECKPOINT_PATH = "/data/feedback_checkpoint.json"
 DEFAULT_NER_REGISTERED_MODEL = "deadline-ner"
 DEFAULT_CLASSIFIER_REGISTERED_MODEL = "deadline-classifier"
+DEFAULT_NER_LABELS = [
+    "O",
+    "B-EXP_DATE",
+    "I-EXP_DATE",
+    "B-START_DATE",
+    "I-START_DATE",
+    "B-DURATION",
+    "I-DURATION",
+    "B-NOTICE_DATE",
+    "I-NOTICE_DATE",
+]
+DEFAULT_CLASSIFIER_LABELS = {
+    0: "none",
+    1: "expiration",
+    2: "effective",
+    3: "renewal",
+    4: "agreement",
+    5: "notice_period",
+}
 
 
 def paperless_auth_header() -> str | None:
@@ -150,11 +174,89 @@ def run_command(command: List[str], env: Dict[str, str] | None = None) -> int:
     return process.returncode
 
 
+def replace_directory(source: Path, destination: Path) -> None:
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)
+
+
+def seed_baseline_monitoring_data() -> None:
+    data_root = Path(os.getenv("MODEL_CANONICAL_ROOT", DEFAULT_CANONICAL_ROOT))
+    source_root = Path(os.getenv("BOOTSTRAP_DATASET_ROOT", DEFAULT_BOOTSTRAP_DATASET_ROOT))
+    data_root.mkdir(parents=True, exist_ok=True)
+
+    for file_name in ("train.jsonl", "test.jsonl"):
+        target = data_root / file_name
+        source = source_root / file_name
+        if not target.exists() and source.exists():
+            shutil.copy2(source, target)
+
+
 def locate_model_dir(prefix: str, model_name: str) -> Path:
     candidate = Path(f"/tmp/{prefix}-{model_name}")
     if not candidate.exists():
         raise FileNotFoundError(f"Expected trained model directory at {candidate}")
     return candidate
+
+
+def seed_bootstrap_pretrained_models(ner_model_name: str, classifier_model_name: str) -> None:
+    ner_dir = Path(f"/tmp/deadline-ner-{ner_model_name}")
+    clf_dir = Path(f"/tmp/deadline-clf-{classifier_model_name}")
+    for path in (ner_dir, clf_dir):
+        if path.exists():
+            shutil.rmtree(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+    ner_id2label = {idx: label for idx, label in enumerate(DEFAULT_NER_LABELS)}
+    ner_label2id = {label: idx for idx, label in ner_id2label.items()}
+    ner_base_model = os.getenv("BOOTSTRAP_NER_BASE_MODEL", "dslim/bert-base-NER")
+    ner_tokenizer = AutoTokenizer.from_pretrained(ner_base_model)
+    ner_model = AutoModelForTokenClassification.from_pretrained(
+        ner_base_model,
+        num_labels=len(DEFAULT_NER_LABELS),
+        id2label=ner_id2label,
+        label2id=ner_label2id,
+        ignore_mismatched_sizes=True,
+    )
+    ner_tokenizer.save_pretrained(ner_dir)
+    ner_model.save_pretrained(ner_dir)
+    (ner_dir / "mlflow_run.json").write_text(
+        json.dumps(
+            {
+                "experiment": "bootstrap-pretrained-ner",
+                "run_id": None,
+                "run_name": ner_model_name,
+                "status": "BOOTSTRAP_PRETRAINED_ONLY",
+                "metrics": {},
+            },
+            indent=2,
+        )
+    )
+
+    clf_id2label = DEFAULT_CLASSIFIER_LABELS
+    clf_label2id = {label: idx for idx, label in clf_id2label.items()}
+    clf_base_model = os.getenv("BOOTSTRAP_CLASSIFIER_BASE_MODEL", "roberta-base")
+    clf_tokenizer = AutoTokenizer.from_pretrained(clf_base_model)
+    clf_model = AutoModelForSequenceClassification.from_pretrained(
+        clf_base_model,
+        num_labels=len(clf_id2label),
+        id2label=clf_id2label,
+        label2id=clf_label2id,
+    )
+    clf_tokenizer.save_pretrained(clf_dir)
+    clf_model.save_pretrained(clf_dir)
+    (clf_dir / "mlflow_run.json").write_text(
+        json.dumps(
+            {
+                "experiment": "bootstrap-pretrained-classifier",
+                "run_id": None,
+                "run_name": classifier_model_name,
+                "status": "BOOTSTRAP_PRETRAINED_ONLY",
+                "metrics": {},
+            },
+            indent=2,
+        )
+    )
 
 
 def package_candidate(ner_model_name: str, classifier_model_name: str) -> Dict[str, Any]:
@@ -180,6 +282,7 @@ def package_candidate(ner_model_name: str, classifier_model_name: str) -> Dict[s
     package_manifest = {
         "candidate_version": candidate_version,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "candidate_root": str(candidate_root),
         "ner_model_name": ner_model_name,
         "classifier_model_name": classifier_model_name,
         "ner_path": str(ner_dst),
@@ -187,6 +290,46 @@ def package_candidate(ner_model_name: str, classifier_model_name: str) -> Dict[s
     }
     (candidate_root / "package_manifest.json").write_text(json.dumps(package_manifest, indent=2))
     return package_manifest
+
+
+def build_quantized_candidate(package_manifest: Dict[str, Any]) -> Dict[str, str]:
+    candidate_root = Path(package_manifest["candidate_root"])
+    quantized_root = candidate_root / "onnx_quantized_model"
+    quantized_root.mkdir(parents=True, exist_ok=True)
+
+    quantize_env = os.environ.copy()
+    quantize_env["HF_CLF_SOURCE_PATH"] = package_manifest["classifier_path"]
+    quantize_env["HF_NER_SOURCE_PATH"] = package_manifest["ner_path"]
+    quantize_env["ONNX_WORKDIR"] = str(quantized_root)
+
+    quantize_script = Path("/app/components/serving/quantize_onnx.py")
+    exit_code = run_command([sys.executable, str(quantize_script)], env=quantize_env)
+    if exit_code != 0:
+        raise RuntimeError("ONNX export/quantization failed")
+
+    quantized_paths = {
+        "root": str(quantized_root),
+        "classifier": str(quantized_root / "onnx_quantized_clf"),
+        "ner": str(quantized_root / "onnx_quantized_ner"),
+    }
+    package_manifest["quantized_paths"] = quantized_paths
+    (candidate_root / "package_manifest.json").write_text(json.dumps(package_manifest, indent=2))
+    return quantized_paths
+
+
+def publish_canonical_models(package_manifest: Dict[str, Any]) -> None:
+    canonical_root = Path(os.getenv("MODEL_CANONICAL_ROOT", DEFAULT_CANONICAL_ROOT))
+    canonical_root.mkdir(parents=True, exist_ok=True)
+
+    replace_directory(Path(package_manifest["ner_path"]), canonical_root / "ner")
+    replace_directory(Path(package_manifest["classifier_path"]), canonical_root / "classifier")
+
+    quantized_paths = package_manifest.get("quantized_paths", {})
+    if quantized_paths:
+        onnx_root = canonical_root / "onnx_quantized_model"
+        onnx_root.mkdir(parents=True, exist_ok=True)
+        replace_directory(Path(quantized_paths["classifier"]), onnx_root / "onnx_quantized_clf")
+        replace_directory(Path(quantized_paths["ner"]), onnx_root / "onnx_quantized_ner")
 
 
 def load_model_run_metadata(model_dir: str) -> Dict[str, Any] | None:
@@ -378,6 +521,7 @@ def build_evaluation_metrics(package_manifest: Dict[str, Any]) -> Dict[str, Any]
                 "ner": package_manifest["ner_path"],
                 "classifier": package_manifest["classifier_path"],
             },
+            "candidate_quantized_paths": package_manifest.get("quantized_paths", {}),
             "ner_f1": float(ner_metrics["metrics"].get("test_f1", 0.0)),
             "clf_macro_f1": float(clf_metrics["metrics"].get("test_f1", 0.0)),
             "mlflow_runs": {
@@ -397,6 +541,7 @@ def build_evaluation_metrics(package_manifest: Dict[str, Any]) -> Dict[str, Any]
 
 
 def orchestrate_training() -> Dict[str, Any]:
+    seed_baseline_monitoring_data()
     training_root = Path(os.getenv("TRAINING_ROOT", "/app/components/training"))
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.platform.svc.cluster.local:5000")
     training_data_path = Path(os.getenv("TRAINING_DATA_PATH", "/app/data/deadline_sentences"))
@@ -411,6 +556,12 @@ def orchestrate_training() -> Dict[str, Any]:
         "classifier_model": os.getenv("CLASSIFIER_MODEL_NAME", "roberta_clf_v3"),
     }
 
+    bootstrap_pretrained_only = os.getenv("BOOTSTRAP_PRETRAINED_ONLY", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
     commands: List[List[str]] = []
     if os.getenv("FORCE_REBUILD_DATASET", "false").lower() in {"1", "true", "yes"} or not training_data_path.exists():
         commands.append(
@@ -422,20 +573,31 @@ def orchestrate_training() -> Dict[str, Any]:
             ]
         )
 
-    commands.extend([
-        ["python", str(training_root / "src" / "train_ner.py"), "--model", config["ner_model"]],
-        ["python", str(training_root / "src" / "train_classifier.py"), "--model", config["classifier_model"]],
-    ])
+    if bootstrap_pretrained_only:
+        seed_bootstrap_pretrained_models(config["ner_model"], config["classifier_model"])
+        results = [{"command": ["bootstrap_pretrained_only"], "exit_code": 0}]
+    else:
+        commands.extend([
+            ["python", str(training_root / "src" / "train_ner.py"), "--model", config["ner_model"]],
+            ["python", str(training_root / "src" / "train_classifier.py"), "--model", config["classifier_model"]],
+        ])
 
-    results = []
-    for command in commands:
-        exit_code = run_command(command, env=shared_env)
-        results.append({"command": command, "exit_code": exit_code})
-        if exit_code != 0:
-            return {"ok": False, "steps": results, "config": config}
+        results = []
+        for command in commands:
+            exit_code = run_command(command, env=shared_env)
+            results.append({"command": command, "exit_code": exit_code})
+            if exit_code != 0:
+                return {"ok": False, "steps": results, "config": config}
 
     package_manifest = package_candidate(config["ner_model"], config["classifier_model"])
-    evaluation_metrics = build_evaluation_metrics(package_manifest)
+    build_quantized_candidate(package_manifest)
+    if os.getenv("PUBLISH_CANONICAL_MODEL", "false").lower() in {"1", "true", "yes"}:
+        publish_canonical_models(package_manifest)
+    evaluation_metrics = (
+        {"bootstrap_mode": "pretrained_only"}
+        if bootstrap_pretrained_only
+        else build_evaluation_metrics(package_manifest)
+    )
     return {
         "ok": True,
         "steps": results,
@@ -446,7 +608,16 @@ def orchestrate_training() -> Dict[str, Any]:
 
 
 def main() -> int:
-    decision = should_retrain(load_feedback_metrics())
+    seed_baseline_monitoring_data()
+    if os.getenv("FORCE_RETRAIN", "false").lower() in {"1", "true", "yes"}:
+        decision = {
+            "trigger_retrain": True,
+            "reasons": ["force_retrain"],
+            "metrics": load_feedback_metrics(),
+            "thresholds": {},
+        }
+    else:
+        decision = should_retrain(load_feedback_metrics())
     output_path = Path(os.getenv("RETRAIN_DECISION_PATH", DEFAULT_OUTPUT_PATH))
     output_path.parent.mkdir(parents=True, exist_ok=True)
 

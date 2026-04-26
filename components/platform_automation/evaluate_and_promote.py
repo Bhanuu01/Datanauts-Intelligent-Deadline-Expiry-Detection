@@ -102,6 +102,7 @@ def evaluate_promotion(metrics: Dict[str, Any], serving_metrics: Dict[str, Any])
         "rollback_reasons": rollback_reasons,
         "candidate_version": metrics.get("candidate_version"),
         "candidate_paths": metrics.get("candidate_paths", {}),
+        "candidate_quantized_paths": metrics.get("candidate_quantized_paths", {}),
         "reason": "candidate_meets_all_training_and_latency_gates" if promote else "candidate_failed_one_or_more_gates",
         "live_metrics": {
             "live_error_rate": live_error_rate,

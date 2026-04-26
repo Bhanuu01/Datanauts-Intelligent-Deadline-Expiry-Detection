@@ -60,6 +60,23 @@ CONFIGS = {
 }
 
 
+def _env_int(name, default=0):
+    value = os.getenv(name)
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def maybe_limit_split(ds, env_var):
+    limit = _env_int(env_var, 0)
+    if limit > 0 and len(ds) > limit:
+        return ds.select(range(limit))
+    return ds
+
+
 # ── Weighted CE loss Trainer ─────────────────────────────────────────────────
 class WeightedTrainer(Trainer):
     def __init__(self, class_weights, *args, **kwargs):
@@ -112,9 +129,9 @@ def downsample_none(ds, none_ratio, seed=42):
 
 def load_classifier_data(none_ratio, seed=42):
     dd       = load_from_disk(DATA_PATH)
-    train_ds = downsample_none(dd["train"], none_ratio, seed)
-    val_ds   = dd["val"]
-    test_ds  = dd["test"]
+    train_ds = maybe_limit_split(downsample_none(dd["train"], none_ratio, seed), "BOOTSTRAP_MAX_TRAIN_SAMPLES")
+    val_ds   = maybe_limit_split(dd["val"], "BOOTSTRAP_MAX_VAL_SAMPLES")
+    test_ds  = maybe_limit_split(dd["test"], "BOOTSTRAP_MAX_TEST_SAMPLES")
 
     print(f"Train: {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)} sentences")
     for name, ds in [("train", train_ds), ("val", val_ds), ("test", test_ds)]:
@@ -336,10 +353,13 @@ def main():
     args = parser.parse_args()
 
     set_seeds(42)
-    cfg = CONFIGS[args.model]
+    cfg = dict(CONFIGS[args.model])
     cfg["base_model"] = resolve_base_model(
         cfg["base_model"], "CLASSIFIER_BASE_MODEL_PATH", "deadline-clf-roberta_clf_v6"
     )
+    epoch_override = _env_int("TRAIN_EPOCH_OVERRIDE", 0)
+    if epoch_override > 0:
+        cfg["epochs"] = epoch_override
     train_ds, val_ds, test_ds = load_classifier_data(cfg["none_ratio"])
 
     if args.model == "baseline":

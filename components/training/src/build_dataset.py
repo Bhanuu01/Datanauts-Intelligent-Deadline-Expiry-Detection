@@ -8,6 +8,7 @@ os.environ["GIT_PYTHON_REFRESH"] = "quiet"
 
 DATASET_ID = "tanvitakavane/datanauts_project_cuad-deadline-ner-version2"
 SAVE_PATH  = "./data/deadline_sentences"
+LOCAL_DATASET_ROOT = os.getenv("LOCAL_DATASET_ROOT", "/app/components/data/gx_quality/data")
 
 NER_LABELS = [
     "O",
@@ -283,6 +284,38 @@ def build_split(hf_split, name):
     return Dataset.from_list(rows)
 
 
+def load_local_split(file_name):
+    path = os.path.join(LOCAL_DATASET_ROOT, file_name)
+    if not os.path.exists(path):
+        return None
+
+    rows = []
+    with open(path) as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            rows.append(json.loads(line))
+    return rows
+
+
+def load_raw_dataset():
+    local_train = load_local_split("train.jsonl")
+    local_val = load_local_split("validation.jsonl")
+    local_test = load_local_split("test.jsonl")
+
+    if local_train is not None and local_val is not None and local_test is not None:
+        print(f"Loading local split dataset from {LOCAL_DATASET_ROOT} ...")
+        return DatasetDict({
+            "train": Dataset.from_list(local_train),
+            "val": Dataset.from_list(local_val),
+            "test": Dataset.from_list(local_test),
+        })
+
+    print(f"Loading {DATASET_ID} ...")
+    return load_dataset(DATASET_ID)
+
+
 def assert_no_split_leakage(raw):
     """Assert that no Filename appears in more than one split (contract-level isolation)."""
     split_ids = {}
@@ -302,8 +335,7 @@ def main():
     parser.add_argument("--save_path", default=SAVE_PATH)
     args = parser.parse_args()
 
-    print(f"Loading {DATASET_ID} ...")
-    raw = load_dataset(DATASET_ID)
+    raw = load_raw_dataset()
     print("Contracts — train:", len(raw["train"]),
           "| val:",  len(raw["val"]),
           "| test:", len(raw["test"]))

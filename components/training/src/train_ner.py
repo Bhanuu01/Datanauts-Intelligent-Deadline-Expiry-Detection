@@ -71,6 +71,23 @@ CONFIGS = {
     },
 }
 
+
+def _env_int(name, default=0):
+    value = os.getenv(name)
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def maybe_limit_split(ds, env_var):
+    limit = _env_int(env_var, 0)
+    if limit > 0 and len(ds) > limit:
+        return ds.select(range(limit))
+    return ds
+
 # O-tag weight=1.0, entity tags upweighted — amplifies rare entity signal
 # (downweighting O caused false-positive explosion: recall=1.0, precision=0.01)
 # NOTICE_DATE weighted higher (12x) — rarest entity in training data
@@ -119,9 +136,9 @@ def load_ner_data():
     dd        = load_from_disk(DATA_PATH)
     # Train on ALL sentences: model needs O-token context to avoid false positives
     # (non-none only = 550 sentences → model tags everything as entity)
-    train_ds  = dd["train"].select_columns(["tokens", "ner_tags"])
-    val_ds    = dd["val"].select_columns(["tokens", "ner_tags"])
-    test_ds   = dd["test"].select_columns(["tokens", "ner_tags"])
+    train_ds  = maybe_limit_split(dd["train"].select_columns(["tokens", "ner_tags"]), "BOOTSTRAP_MAX_TRAIN_SAMPLES")
+    val_ds    = maybe_limit_split(dd["val"].select_columns(["tokens", "ner_tags"]), "BOOTSTRAP_MAX_VAL_SAMPLES")
+    test_ds   = maybe_limit_split(dd["test"].select_columns(["tokens", "ner_tags"]), "BOOTSTRAP_MAX_TEST_SAMPLES")
     print(f"Train (all): {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)} sentences")
     return train_ds, val_ds, test_ds
 
@@ -339,10 +356,13 @@ def main():
     args = parser.parse_args()
 
     set_seeds(42)
-    cfg = CONFIGS[args.model]
+    cfg = dict(CONFIGS[args.model])
     cfg["base_model"] = resolve_base_model(
         cfg["base_model"], "NER_BASE_MODEL_PATH", "deadline-ner-bert_ner_v1"
     )
+    epoch_override = _env_int("TRAIN_EPOCH_OVERRIDE", 0)
+    if epoch_override > 0:
+        cfg["epochs"] = epoch_override
     train_ds, val_ds, test_ds = load_ner_data()
 
     if args.model == "baseline":
