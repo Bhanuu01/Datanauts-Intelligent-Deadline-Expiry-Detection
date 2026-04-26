@@ -22,6 +22,10 @@ FEEDBACK_URL = os.getenv(
     "ONLINE_FEATURES_FEEDBACK_URL",
     "http://online-features.ml.svc.cluster.local:8000/feedback",
 )
+INGEST_URL = os.getenv(
+    "ONLINE_FEATURES_INGEST_URL",
+    "http://online-features.ml.svc.cluster.local:8000/ingest",
+)
 RESULTS_DIR = Path(os.getenv("DEADLINE_RESULTS_DIR", "/usr/src/paperless/data/deadline-results"))
 ASYNC_CHILD_ENV = "DEADLINE_POST_CONSUME_ASYNC_CHILD"
 ASYNC_ENABLED = os.getenv("DEADLINE_POST_CONSUME_ASYNC", "true").lower() in {"1", "true", "yes"}
@@ -95,6 +99,24 @@ def call_inference(document_id: int, content: str, document_type: str | None, fi
     )
     with urllib.request.urlopen(request, timeout=float(os.getenv("INFERENCE_TIMEOUT_SECONDS", "20"))) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def post_ingest_event(document_id: int, content: str, document_type: str | None, filename: str | None) -> None:
+    payload = {
+        "document_id": str(document_id),
+        "ocr_text": content,
+        "document_type": document_type or "unknown",
+        "filename": filename or f"document-{document_id}.pdf",
+    }
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        INGEST_URL,
+        data=data,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=15):
+        return
 
 
 def post_feedback(payload: Dict[str, Any]) -> None:
@@ -241,12 +263,26 @@ def main() -> int:
             print(f"No OCR content available for document {document_id}; skipping inference.")
             return 0
 
+        filename = document.get("original_file_name") or document.get("archived_file_name")
+        try:
+            post_ingest_event(
+                document_id=document_id,
+                content=content,
+                document_type=document.get("document_type"),
+                filename=filename,
+            )
+        except Exception as exc:
+            print(
+                f"Ingest capture failed for document {document_id}: {exc}",
+                file=sys.stderr,
+            )
+
         try:
             result = call_inference(
                 document_id=document_id,
                 content=content,
                 document_type=document.get("document_type"),
-                filename=document.get("original_file_name") or document.get("archived_file_name"),
+                filename=filename,
             )
             persist_result(document_id, result)
             record_feedback_events(document_id, result)
