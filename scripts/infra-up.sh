@@ -40,6 +40,15 @@ terraform -chdir="${TF_DIR}" apply -auto-approve
 ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook -i "${ANSIBLE_DIR}/inventory/inventory.ini" "${ANSIBLE_DIR}/playbooks/bootstrap-k3s.yml"
 "${REPO_ROOT}/scripts/fetch-kubeconfig.sh"
 
+CLUSTER_NAME="$(terraform -chdir="${TF_DIR}" output -raw cluster_name)"
+CONTROL_PLANE_PUBLIC_IP="$(terraform -chdir="${TF_DIR}" output -raw control_plane_public_ip)"
+KUBECONFIG_PATH="${ANSIBLE_DIR}/inventory/${CLUSTER_NAME}.kubeconfig.yaml"
+
+ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook -i localhost, "${ANSIBLE_DIR}/playbooks/deploy-platform-stack.yml" \
+  --extra-vars "repo_root=${REPO_ROOT}" \
+  --extra-vars "kubeconfig_path=${KUBECONFIG_PATH}" \
+  --extra-vars "control_plane_public_ip=${CONTROL_PLANE_PUBLIC_IP}"
+
 echo
-echo "Infrastructure and k3s bootstrap completed."
-echo "Kubeconfig: ${ANSIBLE_DIR}/inventory/$(terraform -chdir="${TF_DIR}" output -raw cluster_name).kubeconfig.yaml"
+echo "Infrastructure, k3s bootstrap, and Kubernetes stack deployment completed."
+echo "Kubeconfig: ${KUBECONFIG_PATH}"

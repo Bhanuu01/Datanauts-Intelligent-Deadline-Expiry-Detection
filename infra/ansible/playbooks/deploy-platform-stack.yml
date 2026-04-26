@@ -1,0 +1,164 @@
+---
+- name: Deploy Datanauts platform stack
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    rendered_root: "/tmp/datanauts-rendered-k8s"
+    rendered_k8s_root: "{{ rendered_root }}/k8s"
+    rollout_deployments:
+      - { namespace: "paperless", name: "postgres" }
+      - { namespace: "paperless", name: "redis" }
+      - { namespace: "paperless", name: "paperless-ngx" }
+      - { namespace: "platform", name: "mlflow-postgres" }
+      - { namespace: "platform", name: "minio" }
+      - { namespace: "platform", name: "mlflow" }
+      - { namespace: "monitoring", name: "kube-state-metrics" }
+      - { namespace: "monitoring", name: "prometheus" }
+      - { namespace: "monitoring", name: "grafana" }
+      - { namespace: "ml", name: "data-generator" }
+      - { namespace: "ml", name: "online-features" }
+      - { namespace: "ml", name: "deadline-onnx-serving" }
+      - { namespace: "ml", name: "deadline-onnx-serving-staging" }
+      - { namespace: "ml", name: "deadline-onnx-serving-canary" }
+      - { namespace: "ml", name: "deadline-onnx-serving-production" }
+  tasks:
+    - name: Validate required deploy variables
+      ansible.builtin.assert:
+        that:
+          - repo_root is defined
+          - kubeconfig_path is defined
+          - control_plane_public_ip is defined
+        fail_msg: "repo_root, kubeconfig_path, and control_plane_public_ip must be provided."
+
+    - name: Recreate rendered manifest workspace
+      ansible.builtin.file:
+        path: "{{ rendered_root }}"
+        state: absent
+
+    - name: Create rendered manifest workspace
+      ansible.builtin.file:
+        path: "{{ rendered_root }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy Kubernetes manifests into rendered workspace
+      ansible.builtin.command:
+        argv:
+          - cp
+          - -R
+          - "{{ repo_root }}/k8s"
+          - "{{ rendered_root }}/"
+
+    - name: Render public IP token in Paperless deployment
+      ansible.builtin.replace:
+        path: "{{ rendered_k8s_root }}/paperless/paperless-deployment.yaml"
+        regexp: "__CONTROL_PLANE_PUBLIC_IP__"
+        replace: "{{ control_plane_public_ip }}"
+
+    - name: Render public IP token in Grafana deployment
+      ansible.builtin.replace:
+        path: "{{ rendered_k8s_root }}/monitoring/grafana-deployment.yaml"
+        regexp: "__CONTROL_PLANE_PUBLIC_IP__"
+        replace: "{{ control_plane_public_ip }}"
+
+    - name: Render public IP token in Prometheus deployment
+      ansible.builtin.replace:
+        path: "{{ rendered_k8s_root }}/monitoring/prometheus-deployment.yaml"
+        regexp: "__CONTROL_PLANE_PUBLIC_IP__"
+        replace: "{{ control_plane_public_ip }}"
+
+    - name: Render public IP token in MLflow deployment
+      ansible.builtin.replace:
+        path: "{{ rendered_k8s_root }}/platform/mlflow-deployment.yaml"
+        regexp: "__CONTROL_PLANE_PUBLIC_IP__"
+        replace: "{{ control_plane_public_ip }}"
+
+    - name: Create namespaces
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - apply
+          - -f
+          - "{{ item }}"
+      loop:
+        - "{{ rendered_k8s_root }}/namespace-paperless.yaml"
+        - "{{ rendered_k8s_root }}/namespace-platform.yaml"
+        - "{{ rendered_k8s_root }}/namespace-ml.yaml"
+        - "{{ rendered_k8s_root }}/monitoring/namespace.yaml"
+
+    - name: Create or refresh runtime secrets
+      ansible.builtin.command:
+        argv:
+          - bash
+          - "{{ repo_root }}/scripts/create-secrets.sh"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Deploy Paperless manifests
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - apply
+          - -f
+          - "{{ rendered_k8s_root }}/paperless/"
+
+    - name: Deploy platform manifests
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - apply
+          - -f
+          - "{{ rendered_k8s_root }}/platform/"
+
+    - name: Deploy monitoring manifests
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - apply
+          - -k
+          - "{{ rendered_k8s_root }}/monitoring"
+
+    - name: Deploy ML manifests
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - apply
+          - -k
+          - "{{ rendered_k8s_root }}/ml"
+
+    - name: Deploy release manifests
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - apply
+          - -k
+          - "{{ rendered_k8s_root }}/release"
+
+    - name: Wait for deployed workloads to roll out
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - rollout
+          - status
+          - deployment/{{ item.name }}
+          - -n
+          - "{{ item.namespace }}"
+          - --timeout=300s
+      loop: "{{ rollout_deployments }}"
+
+    - name: Show deployment summary
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - get
+          - deploy
+          - -A

@@ -4,6 +4,17 @@ set -euo pipefail
 IMAGE_FILTER="${1:-all}"
 PRUNE_AFTER_IMPORT="${PRUNE_AFTER_IMPORT:-1}"
 
+if command -v docker >/dev/null 2>&1; then
+  if docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(docker)
+  else
+    DOCKER_CMD=(sudo docker)
+  fi
+else
+  echo "docker is required but not installed."
+  exit 1
+fi
+
 declare -A IMAGE_TO_DOCKERFILE=(
   ["ghcr.io/bhanuu01/datanauts-online-features:latest"]="components/data/online_features/Dockerfile"
   ["ghcr.io/bhanuu01/datanauts-data-generator:latest"]="components/data/data_generator/Dockerfile"
@@ -29,17 +40,17 @@ build_and_import() {
   local tarball="/tmp/$(basename "${image%%:*}").tar"
 
   echo "=== Building ${image} ==="
-  docker build -t "$image" -f "$dockerfile" "$context"
+  "${DOCKER_CMD[@]}" build -t "$image" -f "$dockerfile" "$context"
 
   echo "=== Importing ${image} into k3s ==="
-  docker save "$image" -o "$tarball"
+  "${DOCKER_CMD[@]}" save "$image" -o "$tarball"
   sudo k3s ctr images import "$tarball"
   rm -f "$tarball"
 
   if [[ "$PRUNE_AFTER_IMPORT" == "1" ]]; then
     echo "=== Pruning Docker artifacts after importing ${image} ==="
-    docker image rm -f "$image" >/dev/null 2>&1 || true
-    sudo docker system prune -af >/dev/null 2>&1 || true
+    "${DOCKER_CMD[@]}" image rm -f "$image" >/dev/null 2>&1 || true
+    "${DOCKER_CMD[@]}" system prune -af >/dev/null 2>&1 || true
   fi
 }
 

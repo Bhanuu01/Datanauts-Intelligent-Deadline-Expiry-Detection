@@ -4,12 +4,12 @@
 set -euo pipefail
 umask 077
 
-PAPERLESS_DB_PASSWORD="${PAPERLESS_DB_PASSWORD:-$(openssl rand -hex 16)}"
-PAPERLESS_SECRET_KEY="${PAPERLESS_SECRET_KEY:-$(openssl rand -hex 32)}"
-PAPERLESS_ADMIN_PASSWORD="${PAPERLESS_ADMIN_PASSWORD:-$(openssl rand -hex 12)}"
-MLFLOW_DB_PASSWORD="${MLFLOW_DB_PASSWORD:-$(openssl rand -hex 16)}"
-MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-$(openssl rand -hex 16)}"
-GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-$(openssl rand -hex 12)}"
+PAPERLESS_DB_PASSWORD="${PAPERLESS_DB_PASSWORD:-}"
+PAPERLESS_SECRET_KEY="${PAPERLESS_SECRET_KEY:-}"
+PAPERLESS_ADMIN_PASSWORD="${PAPERLESS_ADMIN_PASSWORD:-}"
+MLFLOW_DB_PASSWORD="${MLFLOW_DB_PASSWORD:-}"
+MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-}"
+GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-}"
 SHOW_GENERATED_SECRETS="${SHOW_GENERATED_SECRETS:-false}"
 SAVE_CREDENTIALS_FILE="${SAVE_CREDENTIALS_FILE:-}"
 USE_EXISTING_SOURCE_SECRETS="${USE_EXISTING_SOURCE_SECRETS:-false}"
@@ -20,6 +20,38 @@ decode_secret() {
   local key="$3"
   kubectl get secret "${name}" -n "${namespace}" -o "jsonpath={.data.${key}}" | base64 --decode
 }
+
+secret_exists() {
+  local namespace="$1"
+  local name="$2"
+  kubectl get secret "${name}" -n "${namespace}" >/dev/null 2>&1
+}
+
+if secret_exists paperless paperless-secrets && [[ -z "${PAPERLESS_DB_PASSWORD}" ]]; then
+  PAPERLESS_DB_PASSWORD="$(decode_secret paperless paperless-secrets POSTGRES_PASSWORD)"
+fi
+if secret_exists paperless paperless-secrets && [[ -z "${PAPERLESS_SECRET_KEY}" ]]; then
+  PAPERLESS_SECRET_KEY="$(decode_secret paperless paperless-secrets PAPERLESS_SECRET_KEY)"
+fi
+if secret_exists paperless paperless-secrets && [[ -z "${PAPERLESS_ADMIN_PASSWORD}" ]]; then
+  PAPERLESS_ADMIN_PASSWORD="$(decode_secret paperless paperless-secrets PAPERLESS_ADMIN_PASSWORD)"
+fi
+if secret_exists platform platform-secrets && [[ -z "${MLFLOW_DB_PASSWORD}" ]]; then
+  MLFLOW_DB_PASSWORD="$(decode_secret platform platform-secrets POSTGRES_PASSWORD)"
+fi
+if secret_exists platform platform-secrets && [[ -z "${MINIO_ROOT_PASSWORD}" ]]; then
+  MINIO_ROOT_PASSWORD="$(decode_secret platform platform-secrets MINIO_ROOT_PASSWORD)"
+fi
+if secret_exists monitoring monitoring-secrets && [[ -z "${GRAFANA_ADMIN_PASSWORD}" ]]; then
+  GRAFANA_ADMIN_PASSWORD="$(decode_secret monitoring monitoring-secrets GRAFANA_ADMIN_PASSWORD)"
+fi
+
+PAPERLESS_DB_PASSWORD="${PAPERLESS_DB_PASSWORD:-$(openssl rand -hex 16)}"
+PAPERLESS_SECRET_KEY="${PAPERLESS_SECRET_KEY:-$(openssl rand -hex 32)}"
+PAPERLESS_ADMIN_PASSWORD="${PAPERLESS_ADMIN_PASSWORD:-$(openssl rand -hex 12)}"
+MLFLOW_DB_PASSWORD="${MLFLOW_DB_PASSWORD:-$(openssl rand -hex 16)}"
+MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-$(openssl rand -hex 16)}"
+GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-$(openssl rand -hex 12)}"
 
 if [[ "${USE_EXISTING_SOURCE_SECRETS}" != "true" ]]; then
   # Paperless secrets
