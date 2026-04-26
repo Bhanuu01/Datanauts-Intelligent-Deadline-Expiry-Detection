@@ -97,3 +97,63 @@ variable "worker_reservation_id" {
   description = "Blazar reservation flavor ID used as the leased flavor for the worker instance."
   type        = string
 }
+
+variable "enable_durable_block_storage" {
+  description = "Whether to provision durable OpenStack block volumes for Kubernetes persistent data."
+  type        = bool
+  default     = true
+}
+
+variable "paperless_volume_size_gib" {
+  description = "Size of the Cinder volume that stores Paperless data, media, and database files."
+  type        = number
+  default     = 80
+}
+
+variable "platform_volume_size_gib" {
+  description = "Size of the Cinder volume that stores MinIO, MLflow, and MLflow Postgres state."
+  type        = number
+  default     = 80
+}
+
+variable "ml_volume_size_gib" {
+  description = "Size of the Cinder volume that stores shared ML datasets and model artifacts."
+  type        = number
+  default     = 80
+}
+
+variable "monitoring_volume_size_gib" {
+  description = "Size of the Cinder volume that stores Prometheus TSDB data."
+  type        = number
+  default     = 40
+}
+
+variable "paperless_volume_device" {
+  description = "Guest device path for the attached Paperless block volume."
+  type        = string
+  default     = "/dev/vdb"
+}
+
+variable "platform_volume_device" {
+  description = "Guest device path for the attached platform block volume."
+  type        = string
+  default     = "/dev/vdc"
+}
+
+variable "ml_volume_device" {
+  description = "Guest device path for the attached ML block volume."
+  type        = string
+  default     = "/dev/vdd"
+}
+
+variable "monitoring_volume_device" {
+  description = "Guest device path for the attached monitoring block volume."
+  type        = string
+  default     = "/dev/vde"
+}
+
+variable "bootstrap_object_storage_container" {
+  description = "Chameleon object storage container used for bootstrap artifacts and off-node backups."
+  type        = string
+  default     = "datanauts-bootstrap-artifacts"
+}

@@ -3,6 +3,33 @@
   hosts: k3s_cluster
   become: true
   gather_facts: false
+  vars:
+    durable_volume_mount_root: /srv/datanauts-volumes
+    durable_volume_layout:
+      - name: paperless
+        device: "{{ paperless_volume_device | default('/dev/vdb') }}"
+        mount_point: "{{ durable_volume_mount_root }}/paperless"
+        subdirs:
+          - data
+          - media
+          - postgres
+      - name: platform
+        device: "{{ platform_volume_device | default('/dev/vdc') }}"
+        mount_point: "{{ durable_volume_mount_root }}/platform"
+        subdirs:
+          - minio
+          - mlflow
+          - mlflow-postgres
+      - name: ml
+        device: "{{ ml_volume_device | default('/dev/vdd') }}"
+        mount_point: "{{ durable_volume_mount_root }}/ml"
+        subdirs:
+          - model-storage
+      - name: monitoring
+        device: "{{ monitoring_volume_device | default('/dev/vde') }}"
+        mount_point: "{{ durable_volume_mount_root }}/monitoring"
+        subdirs:
+          - prometheus
   tasks:
     - name: Wait for SSH to become reachable
       ansible.builtin.wait_for_connection:
@@ -59,47 +86,62 @@
       ansible.builtin.command: sysctl --system
       changed_when: false
 
-    - name: Check whether firewalld CLI exists
-      ansible.builtin.command: which firewall-cmd
-      register: firewall_cmd
-      changed_when: false
-      failed_when: false
-
-    - name: Check whether firewalld is active
-      ansible.builtin.command: systemctl is-active firewalld
-      register: firewalld_active
-      changed_when: false
-      failed_when: false
-      when: firewall_cmd.rc == 0
-
-    - name: Open common cluster and ingress ports in firewalld
+    - name: Disable firewalld on KVM nodes if present
       ansible.builtin.shell: |
-        firewall-cmd --permanent --add-port=80/tcp
-        firewall-cmd --permanent --add-port=443/tcp
-        firewall-cmd --permanent --add-port=10250/tcp
-        firewall-cmd --permanent --add-port=8472/udp
+        if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q '^firewalld\.service'; then
+          systemctl disable --now firewalld || true
+        fi
       args:
         executable: /bin/bash
+      changed_when: false
+
+    - name: Disable ufw on KVM nodes if present
+      ansible.builtin.shell: |
+        if command -v ufw >/dev/null 2>&1; then
+          ufw disable || true
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Wait for durable block devices to appear on the control plane
+      ansible.builtin.wait_for:
+        path: "{{ item.device }}"
+        timeout: 300
+      loop: "{{ durable_volume_layout }}"
       when:
-        - firewall_cmd.rc == 0
-        - firewalld_active.stdout | default("") | trim == "active"
-      changed_when: true
+        - durable_block_storage_enabled | default(false) | bool
+        - "'control_plane' in group_names"
+
+    - name: Format and mount durable block volumes on the control plane
+      ansible.builtin.shell: |
+        set -euo pipefail
+        device="{{ item.device }}"
+        mount_point="{{ item.mount_point }}"
+        if ! blkid "${device}" >/dev/null 2>&1; then
+          mkfs.ext4 -F -L "datanauts-{{ item.name }}" "${device}"
+        fi
+        uuid="$(blkid -o value -s UUID "${device}")"
+        mkdir -p "${mount_point}"
+        if ! grep -q "UUID=${uuid} " /etc/fstab; then
+          echo "UUID=${uuid} ${mount_point} ext4 defaults,nofail 0 2" >> /etc/fstab
+        fi
+        mountpoint -q "${mount_point}" || mount "${mount_point}"
+        {% for subdir in item.subdirs %}
+        mkdir -p "${mount_point}/{{ subdir }}"
+        {% endfor %}
+      args:
+        executable: /bin/bash
+      loop: "{{ durable_volume_layout }}"
+      when:
+        - durable_block_storage_enabled | default(false) | bool
+        - "'control_plane' in group_names"
+      changed_when: false
 
 - name: Bootstrap control plane
   hosts: control_plane
   become: true
   tasks:
-    - name: Open k3s API port in firewalld on the control plane
-      ansible.builtin.shell: |
-        firewall-cmd --permanent --add-port=6443/tcp
-        firewall-cmd --reload
-      args:
-        executable: /bin/bash
-      when:
-        - firewall_cmd.rc == 0
-        - firewalld_active.stdout | default("") | trim == "active"
-      changed_when: true
-
     - name: Check whether k3s server is already installed
       ansible.builtin.stat:
         path: /etc/systemd/system/k3s.service
@@ -144,6 +186,18 @@
       retries: 60
       delay: 10
       until: control_plane_ready.rc == 0
+      changed_when: false
+
+    - name: Label the control plane as the durable storage node
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - label
+          - node
+          - "{{ node_name | default(inventory_hostname) }}"
+          - datanauts.io/durable-node=true
+          - --overwrite
       changed_when: false
 
 - name: Join worker nodes

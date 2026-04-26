@@ -29,7 +29,8 @@
           - repo_root is defined
           - kubeconfig_path is defined
           - control_plane_public_ip is defined
-        fail_msg: "repo_root, kubeconfig_path, and control_plane_public_ip must be provided."
+          - control_plane_node_name is defined
+        fail_msg: "repo_root, kubeconfig_path, control_plane_public_ip, and control_plane_node_name must be provided."
 
     - name: Recreate rendered manifest workspace
       ansible.builtin.file:
@@ -74,6 +75,12 @@
         regexp: "__CONTROL_PLANE_PUBLIC_IP__"
         replace: "{{ control_plane_public_ip }}"
 
+    - name: Render control plane node token in durable PV definitions
+      ansible.builtin.replace:
+        path: "{{ rendered_k8s_root }}/durable-pvs.yaml"
+        regexp: "__CONTROL_PLANE_NODE_NAME__"
+        replace: "{{ control_plane_node_name }}"
+
     - name: Create namespaces
       ansible.builtin.command:
         argv:
@@ -95,6 +102,15 @@
           - "{{ repo_root }}/scripts/create-secrets.sh"
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Apply durable persistent volume definitions
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig={{ kubeconfig_path }}
+          - apply
+          - -f
+          - "{{ rendered_k8s_root }}/durable-pvs.yaml"
 
     - name: Deploy Paperless manifests
       ansible.builtin.command:

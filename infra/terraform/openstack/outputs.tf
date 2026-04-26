@@ -48,3 +48,33 @@ output "k3s_token" {
   description = "Shared cluster join token."
   sensitive   = true
 }
+
+output "enable_durable_block_storage" {
+  value       = var.enable_durable_block_storage
+  description = "Whether durable OpenStack block volumes are enabled."
+}
+
+output "paperless_volume_device" {
+  value       = var.paperless_volume_device
+  description = "Guest device path for the Paperless durable volume."
+}
+
+output "platform_volume_device" {
+  value       = var.platform_volume_device
+  description = "Guest device path for the platform durable volume."
+}
+
+output "ml_volume_device" {
+  value       = var.ml_volume_device
+  description = "Guest device path for the ML durable volume."
+}
+
+output "monitoring_volume_device" {
+  value       = var.monitoring_volume_device
+  description = "Guest device path for the monitoring durable volume."
+}
+
+output "bootstrap_object_storage_container" {
+  value       = var.bootstrap_object_storage_container
+  description = "Chameleon object storage container used for bootstrap artifacts."
+}

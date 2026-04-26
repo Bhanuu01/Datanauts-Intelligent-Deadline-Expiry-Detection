@@ -6,6 +6,8 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: datanauts-durable
+  volumeName: monitoring-prometheus-pv
   resources:
     requests:
       storage: 10Gi

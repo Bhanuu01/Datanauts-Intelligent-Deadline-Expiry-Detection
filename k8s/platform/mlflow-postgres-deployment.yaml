@@ -6,6 +6,8 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: datanauts-durable
+  volumeName: platform-mlflow-postgres-pv
   resources:
     requests:
       storage: 5Gi

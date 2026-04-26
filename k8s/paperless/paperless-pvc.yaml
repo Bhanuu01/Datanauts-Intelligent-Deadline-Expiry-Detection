@@ -6,6 +6,8 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: datanauts-durable
+  volumeName: paperless-data-pv
   resources:
     requests:
       storage: 20Gi
@@ -18,6 +20,8 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: datanauts-durable
+  volumeName: paperless-media-pv
   resources:
     requests:
       storage: 20Gi

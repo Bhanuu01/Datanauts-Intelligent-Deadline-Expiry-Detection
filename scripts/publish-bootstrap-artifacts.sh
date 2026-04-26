@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+TF_DIR="${ROOT_DIR}/infra/terraform/openstack"
+if [[ -z "${BUCKET_NAME:-}" && -f "${TF_DIR}/terraform.tfvars" ]] && command -v terraform >/dev/null 2>&1; then
+  BUCKET_NAME="$(terraform -chdir="${TF_DIR}" output -raw bootstrap_object_storage_container 2>/dev/null || true)"
+fi
 BUCKET_NAME="${BUCKET_NAME:-cuad-data-proj11-v2}"
 BOOTSTRAP_PREFIX="${BOOTSTRAP_PREFIX:-bootstrap}"
 MODEL_SOURCE_ROOT="${MODEL_SOURCE_ROOT:-${ROOT_DIR}/models}"

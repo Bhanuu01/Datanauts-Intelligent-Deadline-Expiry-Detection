@@ -6,6 +6,7 @@ It creates:
 
 - one control-plane node
 - one worker node
+- four durable OpenStack block volumes for Paperless, platform state, ML model storage, and Prometheus data
 - one security group for cluster traffic
 - one router from the project subnet to the external network
 - one port per node on your existing private network
@@ -43,6 +44,7 @@ Or use the repo wrapper:
 - `control_plane_reservation_id`
 - `worker_lease_id`
 - `worker_reservation_id`
+- `bootstrap_object_storage_container` if you want a non-default Swift container for bootstrap artifacts
 
 The reservation IDs above are the leased flavor IDs returned by Chameleon / Blazar for your active reservations. On `KVM@TACC`, the instances launch directly with those reservation flavor IDs.
 
@@ -51,3 +53,4 @@ The reservation IDs above are the leased flavor IDs returned by Chameleon / Blaz
 - This stack assumes your leases already exist and are active. It does not create or extend Chameleon leases.
 - Instance and router names are derived from `cluster_name`, so a cluster named `demo` becomes `demo-controlnode`, `demo-workernode1`, and `demo-router`.
 - `infra-up.sh` expects a filled-in `infra/terraform/openstack/terraform.tfvars` plus sourced OpenStack credentials.
+- Durable PVC data is now backed by attached OpenStack block volumes rather than the default `local-path` provisioner.

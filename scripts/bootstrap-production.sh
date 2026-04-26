@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+TF_DIR="${ROOT_DIR}/infra/terraform/openstack"
+
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 
 PUBLIC_HOST="${PUBLIC_HOST:-${1:-}}"
@@ -19,6 +21,9 @@ NER_BASE_MODEL_DIR="${NER_BASE_MODEL_DIR:-${MODEL_SOURCE_ROOT}/deadline-ner-bert
 CLF_BASE_MODEL_DIR="${CLF_BASE_MODEL_DIR:-${MODEL_SOURCE_ROOT}/deadline-clf-roberta_clf_v6}"
 BASELINE_DATA_DIR="${BASELINE_DATA_DIR:-${ROOT_DIR}/components/data/gx_quality/data}"
 ARTIFACT_CACHE_DIR="${ARTIFACT_CACHE_DIR:-${ROOT_DIR}/.bootstrap-cache}"
+if [[ -z "${BOOTSTRAP_BUCKET_NAME:-}" && -f "${TF_DIR}/terraform.tfvars" ]] && command -v terraform >/dev/null 2>&1; then
+  BOOTSTRAP_BUCKET_NAME="$(terraform -chdir="${TF_DIR}" output -raw bootstrap_object_storage_container 2>/dev/null || true)"
+fi
 BOOTSTRAP_BUCKET_NAME="${BOOTSTRAP_BUCKET_NAME:-cuad-data-proj11-v2}"
 BOOTSTRAP_PREFIX="${BOOTSTRAP_PREFIX:-bootstrap}"
 BOOTSTRAP_OBJECT_BASE_URL="${BOOTSTRAP_OBJECT_BASE_URL:-https://chi.tacc.chameleoncloud.org/project/containers/container/${BOOTSTRAP_BUCKET_NAME}/${BOOTSTRAP_PREFIX}}"

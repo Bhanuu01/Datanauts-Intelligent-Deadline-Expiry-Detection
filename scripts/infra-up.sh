@@ -42,12 +42,14 @@ ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook -i "${ANSIBLE_DIR}/
 
 CLUSTER_NAME="$(terraform -chdir="${TF_DIR}" output -raw cluster_name)"
 CONTROL_PLANE_PUBLIC_IP="$(terraform -chdir="${TF_DIR}" output -raw control_plane_public_ip)"
+CONTROL_PLANE_NODE_NAME="$(terraform -chdir="${TF_DIR}" output -raw control_plane_name)"
 KUBECONFIG_PATH="${ANSIBLE_DIR}/inventory/${CLUSTER_NAME}.kubeconfig.yaml"
 
 ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook -i localhost, "${ANSIBLE_DIR}/playbooks/deploy-platform-stack.yml" \
   --extra-vars "repo_root=${REPO_ROOT}" \
   --extra-vars "kubeconfig_path=${KUBECONFIG_PATH}" \
-  --extra-vars "control_plane_public_ip=${CONTROL_PLANE_PUBLIC_IP}"
+  --extra-vars "control_plane_public_ip=${CONTROL_PLANE_PUBLIC_IP}" \
+  --extra-vars "control_plane_node_name=${CONTROL_PLANE_NODE_NAME}"
 
 echo
 echo "Infrastructure, k3s bootstrap, and Kubernetes stack deployment completed."

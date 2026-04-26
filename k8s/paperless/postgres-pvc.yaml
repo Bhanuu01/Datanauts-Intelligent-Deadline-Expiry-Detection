@@ -6,6 +6,8 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: datanauts-durable
+  volumeName: paperless-postgres-pv
   resources:
     requests:
       storage: 10Gi

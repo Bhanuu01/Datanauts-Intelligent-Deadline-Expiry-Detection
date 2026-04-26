@@ -18,6 +18,12 @@ worker_name="$(terraform -chdir="${TF_DIR}" output -raw worker_name)"
 worker_public_ip="$(terraform -chdir="${TF_DIR}" output -raw worker_public_ip)"
 worker_private_ip="$(terraform -chdir="${TF_DIR}" output -raw worker_private_ip)"
 k3s_token="$(terraform -chdir="${TF_DIR}" output -raw k3s_token)"
+durable_block_storage_enabled="$(terraform -chdir="${TF_DIR}" output -raw enable_durable_block_storage)"
+paperless_volume_device="$(terraform -chdir="${TF_DIR}" output -raw paperless_volume_device)"
+platform_volume_device="$(terraform -chdir="${TF_DIR}" output -raw platform_volume_device)"
+ml_volume_device="$(terraform -chdir="${TF_DIR}" output -raw ml_volume_device)"
+monitoring_volume_device="$(terraform -chdir="${TF_DIR}" output -raw monitoring_volume_device)"
+bootstrap_object_storage_container="$(terraform -chdir="${TF_DIR}" output -raw bootstrap_object_storage_container)"
 ssh_private_key_path="${ssh_private_key_path_raw/#\~/${HOME}}"
 
 cat > "${INVENTORY_PATH}" <<EOF
@@ -37,6 +43,12 @@ ansible_ssh_private_key_file=${ssh_private_key_path}
 cluster_name=${cluster_name}
 k3s_token=${k3s_token}
 k3s_control_plane_ip=${control_plane_private_ip}
+durable_block_storage_enabled=${durable_block_storage_enabled}
+paperless_volume_device=${paperless_volume_device}
+platform_volume_device=${platform_volume_device}
+ml_volume_device=${ml_volume_device}
+monitoring_volume_device=${monitoring_volume_device}
+bootstrap_object_storage_container=${bootstrap_object_storage_container}
 EOF
 
 echo "Wrote ${INVENTORY_PATH}"
