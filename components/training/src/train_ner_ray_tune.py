@@ -17,10 +17,12 @@ from seqeval.metrics import f1_score, precision_score, recall_score, classificat
 
 os.environ["AWS_ACCESS_KEY_ID"]      = os.getenv("AWS_ACCESS_KEY_ID", "datanauts-key")
 os.environ["AWS_SECRET_ACCESS_KEY"]  = os.getenv("AWS_SECRET_ACCESS_KEY", "datanauts-secret")
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv("MLFLOW_S3_ENDPOINT_URL", "http://129.114.27.190:30900")
+os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv(
+    "MLFLOW_S3_ENDPOINT_URL", "http://minio.platform.svc.cluster.local:9000"
+)
 os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
 
-MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://129.114.27.190:30500")
+MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.platform.svc.cluster.local:5000")
 EXPERIMENT = "deadline-detection-ner-ray-tune"
 BASE_MODEL = "dslim/bert-base-NER"
 DATA_PATH  = "/app/data/deadline_sentences"

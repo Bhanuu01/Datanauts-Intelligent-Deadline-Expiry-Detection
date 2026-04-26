@@ -12,6 +12,10 @@ spec:
     metadata:
       labels:
         app: online-features
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8000"
     spec:
       containers:
         - name: online-features
@@ -24,6 +28,17 @@ spec:
               value: redis.paperless.svc.cluster.local
             - name: REDIS_PORT
               value: "6379"
+            - name: RUNTIME_DATA_S3_ENDPOINT_URL
+              value: http://minio.platform.svc.cluster.local:9000
+            - name: RUNTIME_DATA_BUCKET
+              value: datanauts-runtime
+            - name: AWS_ACCESS_KEY_ID
+              value: mlflow
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: MINIO_ROOT_PASSWORD
             - name: PRODUCTION_DATA_LOG_PATH
               value: /data/production_ingest.jsonl
             - name: FEEDBACK_LOG_PATH

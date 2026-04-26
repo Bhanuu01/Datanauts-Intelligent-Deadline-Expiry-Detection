@@ -28,7 +28,7 @@ spec:
                   name: monitoring-secrets
                   key: GRAFANA_ADMIN_PASSWORD
             - name: GF_SERVER_ROOT_URL
-              value: http://129.114.27.190/grafana
+              value: "%(protocol)s://%(domain)s/grafana"
             - name: GF_SERVER_SERVE_FROM_SUB_PATH
               value: "true"
           ports:

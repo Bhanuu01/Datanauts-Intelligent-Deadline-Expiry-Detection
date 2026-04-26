@@ -27,8 +27,8 @@ training:
   fp16: true
 
 mlflow:
-  tracking_uri: "http://129.114.27.190:8000"
-  s3_endpoint: "http://129.114.27.190:9000"
+  tracking_uri: "http://mlflow.platform.svc.cluster.local:5000"
+  s3_endpoint: "http://minio.platform.svc.cluster.local:9000"
   experiment_ner: "deadline-detection-ner"
   experiment_clf: "deadline-detection-classifier"
   experiment_e2e: "deadline-detection-e2e"

@@ -14,12 +14,15 @@ from seqeval.metrics import f1_score, precision_score, recall_score, classificat
 os.environ["AWS_ACCESS_KEY_ID"]      = os.getenv("AWS_ACCESS_KEY_ID", "datanauts-key")
 os.environ["AWS_SECRET_ACCESS_KEY"]  = os.getenv("AWS_SECRET_ACCESS_KEY", "datanauts-secret")
 os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv("MLFLOW_S3_ENDPOINT_URL", "http://129.114.27.190:30900")
+os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv(
+    "MLFLOW_S3_ENDPOINT_URL", "http://minio.platform.svc.cluster.local:9000"
+)
 
-MLFLOW_URI  = os.getenv("MLFLOW_TRACKING_URI", "http://129.114.27.190:30500")
+MLFLOW_URI  = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.platform.svc.cluster.local:5000")
 EXPERIMENT  = "deadline-detection-ner"
 DATA_PATH   = "./data/deadline_sentences"
 OUTPUT_DIR  = "/tmp/deadline-ner"
+REPO_ROOT   = Path(__file__).resolve().parents[3]
 
 LABEL_LIST  = [
     "O",
@@ -72,6 +75,24 @@ CONFIGS = {
 # (downweighting O caused false-positive explosion: recall=1.0, precision=0.01)
 # NOTICE_DATE weighted higher (12x) — rarest entity in training data
 NER_WEIGHTS = torch.tensor([1.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 12.0, 12.0])
+
+
+def resolve_base_model(default_model, env_var, fallback_dir):
+    override = os.getenv(env_var)
+    candidates = []
+    if override:
+        candidates.append(Path(override))
+    candidates.extend([
+        REPO_ROOT / "models" / fallback_dir,
+        Path("/data/base-models") / fallback_dir,
+    ])
+
+    for candidate in candidates:
+        if candidate.exists() and any(candidate.iterdir()):
+            print(f"Using local base model from {candidate}")
+            return str(candidate)
+
+    return default_model
 
 
 def set_seeds(seed=42):
@@ -319,6 +340,9 @@ def main():
 
     set_seeds(42)
     cfg = CONFIGS[args.model]
+    cfg["base_model"] = resolve_base_model(
+        cfg["base_model"], "NER_BASE_MODEL_PATH", "deadline-ner-bert_ner_v1"
+    )
     train_ds, val_ds, test_ds = load_ner_data()
 
     if args.model == "baseline":

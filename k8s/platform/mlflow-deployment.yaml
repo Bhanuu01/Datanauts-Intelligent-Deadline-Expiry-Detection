@@ -58,8 +58,9 @@ spec:
               --port=5000
               --backend-store-uri=postgresql://mlflow:${POSTGRES_PASSWORD}@mlflow-postgres:5432/mlflow
               --default-artifact-root=s3://mlflow/
+              --static-prefix=/mlflow
               --allowed-hosts=*
-              --cors-allowed-origins=http://129.114.27.190:30500,http://129.114.27.190,http://localhost:30500,http://127.0.0.1:30500
+              --cors-allowed-origins=*
           volumeMounts:
             - name: mlflow-data
               mountPath: /mlflow

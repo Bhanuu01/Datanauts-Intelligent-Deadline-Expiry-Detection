@@ -7,3 +7,4 @@ crash.log
 terraform.tfvars
 infra/ansible/inventory/inventory.ini
 infra/ansible/inventory/*.kubeconfig.yaml
+models/

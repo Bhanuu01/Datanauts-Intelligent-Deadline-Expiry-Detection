@@ -77,7 +77,10 @@ spec:
             - name: DEADLINE_POST_CONSUME_ASYNC
               value: "true"
             - name: PAPERLESS_URL
-              value: http://129.114.27.190
+              valueFrom:
+                configMapKeyRef:
+                  name: public-endpoints
+                  key: PUBLIC_BASE_URL
           volumeMounts:
             - name: data
               mountPath: /usr/src/paperless/data

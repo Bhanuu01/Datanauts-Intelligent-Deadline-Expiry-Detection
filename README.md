@@ -58,9 +58,11 @@ k8s/
   sealed-secrets/              Optional sealed-secret manifests
 
 scripts/
-  provision.sh                 Cluster bootstrap helper
+  bootstrap-production.sh      One-shot fresh-instance production bootstrap
+  provision.sh                 Wrapper around bootstrap-production.sh
   create-secrets.sh            Secret creation
   sync-runtime-secrets.sh      Mirrors runtime secrets into ml namespace
+  sync-public-endpoints.sh     Syncs the current public IP into runtime config
   rebuild-k3s-images.sh        Build and import local images into k3s
   chameleon-health-check.sh    Cluster sanity check
   demo-readiness-check.sh      Demo validation helper
@@ -102,7 +104,45 @@ cd Datanauts-Intelligent-Deadline-Expiry-Detection
 git checkout devops/final-hardening
 ```
 
-### 2. Install k3s
+### 2. One-shot bootstrap
+
+On a fresh instance, this is the fastest path:
+
+```bash
+bash scripts/bootstrap-production.sh <PUBLIC_IP>
+```
+
+This script will:
+
+- install `k3s` if needed
+- configure `kubectl`
+- disable host firewalls that break K3s pod networking
+- create secrets and mirrored runtime copies
+- sync the current public IP into runtime config
+- build and import local images into `k3s`
+- deploy Paperless, MLflow, MinIO, Prometheus, Grafana, serving, and release manifests
+- create the MinIO `mlflow` bucket
+- seed baseline train/test data into the shared PVC
+- seed local base models / quantized ONNX models if present under `models/`
+- otherwise download bootstrap train/test/model artifacts from Chameleon object storage
+
+If you want a new instance to be fully self-bootstrapping, publish the current artifacts first:
+
+```bash
+bash scripts/publish-bootstrap-artifacts.sh
+```
+
+By default the bootstrap downloader reads from:
+
+```text
+https://chi.tacc.chameleoncloud.org/project/containers/container/cuad-data-proj11-v2/bootstrap
+```
+
+Override that with `BOOTSTRAP_OBJECT_BASE_URL` if you use a different bucket or prefix.
+
+### 3. Manual install path
+
+If you want to do it step by step instead:
 
 ```bash
 curl -sfL https://get.k3s.io | sh -
@@ -119,7 +159,7 @@ Verify:
 kubectl get nodes
 ```
 
-### 3. Create secrets
+### 4. Create secrets
 
 ```bash
 bash scripts/create-secrets.sh
@@ -145,7 +185,7 @@ kubectl apply -k k8s/sealed-secrets/
 USE_EXISTING_SOURCE_SECRETS=true bash scripts/create-secrets.sh
 ```
 
-### 4. Build and import local images
+### 5. Build and import local images
 
 Build all custom images:
 
@@ -169,7 +209,7 @@ Custom images used by this deployment include:
 - `ghcr.io/bhanuu01/datanauts-platform-automation:latest`
 - `ghcr.io/bhanuu01/datanauts-onnx-serving:latest`
 
-### 5. Deploy the stack
+### 6. Deploy the stack
 
 ```bash
 kubectl apply -f k8s/paperless/
@@ -179,7 +219,7 @@ kubectl apply -k k8s/ml
 kubectl apply -k k8s/release
 ```
 
-### 6. Verify deployments
+### 7. Verify deployments
 
 ```bash
 kubectl rollout status deployment/paperless-ngx -n paperless --timeout=300s
@@ -193,16 +233,17 @@ kubectl rollout status deployment/deadline-onnx-serving -n ml --timeout=300s
 
 ## Public URLs
 
-Current Chameleon deployment:
+Public URLs are served from the current node IP:
 
-- Paperless: [http://129.114.27.190](http://129.114.27.190)
-- MLflow: [http://129.114.27.190:30500](http://129.114.27.190:30500)
-- MinIO Console: [http://129.114.27.190:30901](http://129.114.27.190:30901)
-- MinIO S3 API: [http://129.114.27.190:30900](http://129.114.27.190:30900)
-- Grafana: [http://129.114.27.190/grafana/login](http://129.114.27.190/grafana/login)
-- Prometheus: [http://129.114.27.190/prometheus/graph](http://129.114.27.190/prometheus/graph)
+- Paperless: `http://<NODE_IP>`
+- MLflow: `http://<NODE_IP>/mlflow/`
+- MinIO Console: `http://<NODE_IP>:30901`
+- MinIO S3 API: `http://<NODE_IP>:30900`
+- Grafana: `http://<NODE_IP>/grafana/login`
+- Prometheus: `http://<NODE_IP>/prometheus/graph`
 
-If you deploy on another node, replace the public IP.
+For this single-node K3s deployment, Grafana, Prometheus, and Paperless derive
+their public host dynamically from the node they are running on.
 
 ## Credentials
 
@@ -454,3 +495,73 @@ Recommended checks:
 - Date extraction is strongest on contract-style text and supported date formats.
 - If you rebuild serving or platform-automation images, re-import them into k3s with `./scripts/rebuild-k3s-images.sh`.
 
+Rebuild and re-import:
+
+```bash
+./scripts/rebuild-k3s-images.sh
+```
+
+Then restart the affected deployment:
+
+```bash
+kubectl rollout restart deployment/deadline-onnx-serving -n ml
+kubectl rollout restart deployment/online-features -n ml
+kubectl rollout restart deployment/paperless-ngx -n paperless
+```
+
+### Disk pressure on the node
+
+Check disk:
+
+```bash
+df -h /
+```
+
+This system depends on local image builds. If the root disk fills up, pods can be evicted and local images can disappear from k3s.
+
+## Quick Demo Checklist
+
+1. Show `kubectl get pods` for all namespaces.
+2. Open Paperless and upload a document.
+3. Show ML tags on the Paperless document.
+4. Add `ML Feedback Correct` or `ML Feedback Wrong`.
+5. Show `/data/production_ingest.jsonl` and `/data/feedback_events.jsonl`.
+6. Show retrain/promotion CronJobs and decision files.
+7. Show Grafana `Datanauts Overview`.
+8. Show Prometheus targets or alerts.
+
+## Source of Truth
+
+Use branch `main`.
+
+If you are deploying this system again from scratch, clone `main`, create secrets, rebuild/import the images, and apply the Kubernetes manifests in the order described above.
+
+
+
+
+
+
+
+
+
+deadline_onnx_predictions_total
+
+deadline_onnx_confidence_score_bucket
+
+
+Paperless: http://<NODE_IP>
+Grafana: http://<NODE_IP>/grafana/login
+MinIO: http://<NODE_IP>:30901
+MLflow: http://<NODE_IP>/mlflow/
+Prometheus: http://<NODE_IP>/prometheus/graph
+
+
+
+Paperless user: admin
+Paperless pass: Admin123!
+
+Grafana user: admin
+Grafana pass: Admin123!
+
+MinIO user: mlflow
+MinIO pass: 4561fd21dcffc7fc024f164ab34e932e
