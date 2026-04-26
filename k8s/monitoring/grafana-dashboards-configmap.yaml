@@ -156,7 +156,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total[15m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "legendFormat": "__auto",
               "range": true,
               "refId": "A"
@@ -188,7 +188,7 @@ data:
                   }
                 ]
               },
-              "unit": "reqps"
+              "unit": "short"
             },
             "overrides": []
           },
@@ -216,7 +216,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(rate(deadline_onnx_predictions_total[5m])) or vector(0)",
+              "expr": "sum(rate(deadline_onnx_predictions_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[5m])) or vector(0)",
               "legendFormat": "__auto",
               "range": true,
               "refId": "A"
@@ -320,14 +320,14 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(rate(deadline_onnx_predictions_total[5m])) or vector(0)",
+              "expr": "sum(rate(deadline_onnx_predictions_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[5m])) or vector(0)",
               "legendFormat": "onnx predictions",
               "range": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
-              "expr": "sum(rate(online_features_ingest_requests_total[5m])) or vector(0)",
+              "expr": "sum(rate(online_features_ingest_requests_total{job=\"kubernetes-pods\",app=\"online-features\"}[5m])) or vector(0)",
               "legendFormat": "online-features ingest",
               "range": true,
               "refId": "B"
@@ -371,14 +371,14 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total[15m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "legendFormat": "onnx uncertain (15m)",
               "range": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_user_corrections_total[15m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_user_corrections_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "legendFormat": "user corrections (15m)",
               "range": true,
               "refId": "B"
@@ -422,7 +422,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_inference_latency_seconds_bucket[5m]))) or vector(0)",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_inference_latency_seconds_bucket{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[5m]))) or vector(0)",
               "legendFormat": "p95 latency",
               "range": true,
               "refId": "A"
@@ -466,14 +466,14 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(rate(online_features_ingest_requests_total[5m]))",
+              "expr": "sum(rate(online_features_ingest_requests_total{job=\"kubernetes-pods\",app=\"online-features\"}[5m]))",
               "legendFormat": "ingest requests",
               "range": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
-              "expr": "sum(rate(online_features_candidate_sentences_total[5m]))",
+              "expr": "sum(rate(online_features_candidate_sentences_total{job=\"kubernetes-pods\",app=\"online-features\"}[5m]))",
               "legendFormat": "candidate sentences",
               "range": true,
               "refId": "B"
@@ -517,28 +517,28 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_predictions_total[15m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_predictions_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "legendFormat": "predictions (15m)",
               "range": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total[15m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "legendFormat": "uncertain (15m)",
               "range": true,
               "refId": "B"
             },
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_user_corrections_total[15m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_user_corrections_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "legendFormat": "corrections (15m)",
               "range": true,
               "refId": "C"
             },
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_failures_total[15m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_failures_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "legendFormat": "failures (15m)",
               "range": true,
               "refId": "D"
@@ -751,12 +751,12 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(rate(deadline_onnx_predictions_total[5m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_predictions_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Predictions / sec",
+          "title": "Predictions (15m)",
           "type": "stat"
         },
         {
@@ -808,7 +808,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_failures_total[15m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_failures_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "range": true,
               "refId": "A"
             }
@@ -826,7 +826,7 @@ data:
               "color": {
                 "mode": "palette-classic"
               },
-              "unit": "reqps"
+              "unit": "short"
             },
             "overrides": []
           },
@@ -851,20 +851,20 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(rate(deadline_onnx_predictions_total[5m])) or vector(0)",
-              "legendFormat": "predictions",
+              "expr": "sum(increase(deadline_onnx_predictions_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[5m])) or vector(0)",
+              "legendFormat": "predictions / 5m",
               "range": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
-              "expr": "sum(rate(deadline_onnx_uncertain_predictions_total[5m])) or vector(0)",
-              "legendFormat": "review required",
+              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[5m])) or vector(0)",
+              "legendFormat": "review required / 5m",
               "range": true,
               "refId": "B"
             }
           ],
-          "title": "Serving Throughput",
+          "title": "Serving Activity",
           "type": "timeseries"
         },
         {
@@ -902,7 +902,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_inference_latency_seconds_bucket[5m]))) or vector(0)",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_inference_latency_seconds_bucket{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[5m]))) or vector(0)",
               "legendFormat": "p95 latency",
               "range": true,
               "refId": "A"
@@ -946,7 +946,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_confidence_score_bucket[5m]))) or vector(0)",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_confidence_score_bucket{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[5m]))) or vector(0)",
               "legendFormat": "p95 confidence",
               "range": true,
               "refId": "A"
@@ -990,7 +990,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "(sum(increase(deadline_onnx_user_corrections_total[15m])) / clamp_min(sum(increase(deadline_onnx_predictions_total[15m])), 1)) or vector(0)",
+              "expr": "(sum(increase(deadline_onnx_user_corrections_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) / clamp_min(sum(increase(deadline_onnx_predictions_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])), 1)) or vector(0)",
               "legendFormat": "correction rate (15m)",
               "range": true,
               "refId": "A"
@@ -1011,7 +1011,7 @@ data:
         "list": []
       },
       "time": {
-        "from": "now-6h",
+        "from": "now-1h",
         "to": "now"
       },
       "title": "Datanauts Serving",
@@ -1047,7 +1047,7 @@ data:
                   }
                 ]
               },
-              "unit": "reqps"
+              "unit": "short"
             },
             "overrides": []
           },
@@ -1074,12 +1074,12 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(rate(online_features_ingest_requests_total[5m])) or vector(0)",
+              "expr": "sum(increase(online_features_ingest_requests_total{job=\"kubernetes-pods\",app=\"online-features\"}[15m])) or vector(0)",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Ingest Requests / sec",
+          "title": "Ingest Requests (15m)",
           "type": "stat"
         },
         {
@@ -1105,7 +1105,7 @@ data:
                   }
                 ]
               },
-              "unit": "reqps"
+              "unit": "short"
             },
             "overrides": []
           },
@@ -1132,12 +1132,12 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(rate(online_features_candidate_sentences_total[5m])) or vector(0)",
+              "expr": "sum(increase(online_features_candidate_sentences_total{job=\"kubernetes-pods\",app=\"online-features\"}[15m])) or vector(0)",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Candidate Sentences / sec",
+          "title": "Candidate Sentences (15m)",
           "type": "stat"
         },
         {
@@ -1189,7 +1189,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_user_corrections_total[15m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_user_corrections_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "range": true,
               "refId": "A"
             }
@@ -1207,7 +1207,7 @@ data:
               "color": {
                 "mode": "palette-classic"
               },
-              "unit": "reqps"
+              "unit": "short"
             },
             "overrides": []
           },
@@ -1232,20 +1232,20 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(rate(online_features_ingest_requests_total[5m])) or vector(0)",
-              "legendFormat": "ingest requests",
+              "expr": "sum(increase(online_features_ingest_requests_total{job=\"kubernetes-pods\",app=\"online-features\"}[5m])) or vector(0)",
+              "legendFormat": "ingest requests / 5m",
               "range": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
-              "expr": "sum(rate(online_features_candidate_sentences_total[5m])) or vector(0)",
-              "legendFormat": "candidate sentences",
+              "expr": "sum(increase(online_features_candidate_sentences_total{job=\"kubernetes-pods\",app=\"online-features\"}[5m])) or vector(0)",
+              "legendFormat": "candidate sentences / 5m",
               "range": true,
               "refId": "B"
             }
           ],
-          "title": "Online Features Throughput",
+          "title": "Online Features Activity",
           "type": "timeseries"
         },
         {
@@ -1282,14 +1282,14 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_user_corrections_total[15m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_user_corrections_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "legendFormat": "serving corrections",
               "range": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total[15m])) or vector(0)",
+              "expr": "sum(increase(deadline_onnx_uncertain_predictions_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[15m])) or vector(0)",
               "legendFormat": "review required",
               "range": true,
               "refId": "B"
@@ -1333,7 +1333,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(online_features_ingest_latency_seconds_bucket[5m]))) or vector(0)",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(online_features_ingest_latency_seconds_bucket{job=\"kubernetes-pods\",app=\"online-features\"}[5m]))) or vector(0)",
               "legendFormat": "p95 ingest latency",
               "range": true,
               "refId": "A"
@@ -1377,7 +1377,7 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(increase(online_features_redis_errors_total[15m])) or vector(0)",
+              "expr": "sum(increase(online_features_redis_errors_total{job=\"kubernetes-pods\",app=\"online-features\"}[15m])) or vector(0)",
               "legendFormat": "redis errors (15m)",
               "range": true,
               "refId": "A"
@@ -1398,7 +1398,7 @@ data:
         "list": []
       },
       "time": {
-        "from": "now-6h",
+        "from": "now-1h",
         "to": "now"
       },
       "title": "Datanauts Data & Feedback",

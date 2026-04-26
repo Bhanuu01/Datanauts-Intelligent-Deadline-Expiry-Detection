@@ -4,8 +4,12 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
+from functools import lru_cache
 
 import redis
+import boto3
+from botocore.exceptions import BotoCoreError
+from botocore.exceptions import ClientError
 from fastapi import FastAPI
 from prometheus_client import CONTENT_TYPE_LATEST
 from prometheus_client import Counter
@@ -73,6 +77,39 @@ def append_jsonl(path_str: str, payload: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('a', encoding='utf-8') as handle:
         handle.write(json.dumps(payload) + '\n')
+    mirror_file_to_object_storage(path)
+
+
+@lru_cache(maxsize=1)
+def object_storage_client():
+    bucket = os.getenv('RUNTIME_DATA_BUCKET', '').strip()
+    endpoint = os.getenv('RUNTIME_DATA_S3_ENDPOINT_URL', '').strip()
+    access_key = os.getenv('AWS_ACCESS_KEY_ID', '').strip()
+    secret_key = os.getenv('AWS_SECRET_ACCESS_KEY', '').strip()
+    if not all([bucket, endpoint, access_key, secret_key]):
+        return None
+
+    client = boto3.client(
+        's3',
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+    )
+    return client
+
+
+def mirror_file_to_object_storage(path: Path):
+    client = object_storage_client()
+    bucket = os.getenv('RUNTIME_DATA_BUCKET', '').strip()
+    if client is None or not bucket:
+        return
+
+    object_key = f"runtime-data/{path.name}"
+    try:
+        client.upload_file(str(path), bucket, object_key)
+    except (BotoCoreError, ClientError) as exc:
+        REDIS_ERRORS.inc()
+        print(f"[runtime-data] object storage mirror failed for {path}: {exc}")
 
 def detect_section(s):
     for k, v in SECTIONS.items():

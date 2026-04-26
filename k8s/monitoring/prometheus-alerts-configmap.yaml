@@ -36,7 +36,7 @@ data:
               description: One or more pods in the ml namespace have stayed in a non-running phase for over 5 minutes.
 
           - alert: OnnxServingLowConfidence
-            expr: histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_confidence_score_bucket[5m]))) < 0.55
+            expr: histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_confidence_score_bucket{job="kubernetes-pods",app=~"deadline-onnx-serving.*"}[5m]))) < 0.55
             for: 10m
             labels:
               severity: warning
@@ -45,7 +45,7 @@ data:
               description: The p95 observed ONNX confidence score has stayed below 0.55 for 10 minutes.
 
           - alert: OnnxServingUncertainSpike
-            expr: increase(deadline_onnx_uncertain_predictions_total[15m]) > 5
+            expr: increase(deadline_onnx_uncertain_predictions_total{job="kubernetes-pods",app=~"deadline-onnx-serving.*"}[15m]) > 5
             for: 5m
             labels:
               severity: warning
@@ -54,7 +54,7 @@ data:
               description: The ONNX live serving path produced more than 5 uncertain predictions in the last 15 minutes.
 
           - alert: OnnxServingLatencyHigh
-            expr: histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_inference_latency_seconds_bucket[5m]))) > 0.5
+            expr: histogram_quantile(0.95, sum by (le) (rate(deadline_onnx_inference_latency_seconds_bucket{job="kubernetes-pods",app=~"deadline-onnx-serving.*"}[5m]))) > 0.5
             for: 10m
             labels:
               severity: warning
@@ -63,7 +63,7 @@ data:
               description: The ONNX live serving path has sustained p95 inference latency above 500ms for 10 minutes.
 
           - alert: OnlineFeaturesRedisErrors
-            expr: increase(online_features_redis_errors_total[15m]) > 0
+            expr: increase(online_features_redis_errors_total{job="kubernetes-pods",app="online-features"}[15m]) > 0
             for: 5m
             labels:
               severity: warning

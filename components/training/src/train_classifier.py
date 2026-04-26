@@ -14,12 +14,15 @@ from sklearn.metrics import f1_score as skf1, accuracy_score, classification_rep
 os.environ["AWS_ACCESS_KEY_ID"]      = os.getenv("AWS_ACCESS_KEY_ID", "datanauts-key")
 os.environ["AWS_SECRET_ACCESS_KEY"]  = os.getenv("AWS_SECRET_ACCESS_KEY", "datanauts-secret")
 os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv("MLFLOW_S3_ENDPOINT_URL", "http://129.114.27.190:30900")
+os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv(
+    "MLFLOW_S3_ENDPOINT_URL", "http://minio.platform.svc.cluster.local:9000"
+)
 
-MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://129.114.27.190:30500")
+MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.platform.svc.cluster.local:5000")
 EXPERIMENT = "deadline-detection-classifier"
 DATA_PATH  = "./data/deadline_sentences"
 OUTPUT_DIR = "/tmp/deadline-clf"
+REPO_ROOT  = Path(__file__).resolve().parents[3]
 
 CLF_LABEL2ID = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3, "agreement": 4, "notice_period": 5}
 CLF_ID2LABEL = {0: "none", 1: "expiration", 2: "effective", 3: "renewal", 4: "agreement", 5: "notice_period"}
@@ -334,6 +337,9 @@ def main():
 
     set_seeds(42)
     cfg = CONFIGS[args.model]
+    cfg["base_model"] = resolve_base_model(
+        cfg["base_model"], "CLASSIFIER_BASE_MODEL_PATH", "deadline-clf-roberta_clf_v6"
+    )
     train_ds, val_ds, test_ds = load_classifier_data(cfg["none_ratio"])
 
     if args.model == "baseline":
