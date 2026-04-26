@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import subprocess
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +10,7 @@ import redis
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI
+from openstack import connection
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, Gauge, generate_latest
 from pydantic import BaseModel
 from starlette.responses import Response
@@ -156,27 +156,18 @@ def mirror_to_chameleon(local_path: Path, object_name: str):
         print('[chameleon] credentials not set, skipping mirror')
         return
     try:
-        env = {
-            **os.environ,
-            'OS_AUTH_TYPE': 'v3applicationcredential',
-            'OS_AUTH_URL': CHAMELEON_AUTH_URL,
-            'OS_APPLICATION_CREDENTIAL_ID': CHAMELEON_CREDENTIAL_ID,
-            'OS_APPLICATION_CREDENTIAL_SECRET': CHAMELEON_CREDENTIAL_SECRET,
-            'OS_REGION_NAME': 'CHI@TACC',
-            'OS_INTERFACE': 'public',
-            'OS_IDENTITY_API_VERSION': '3',
-        }
-        result = subprocess.run(
-            ['openstack', 'object', 'create', '--name',
-             object_name, CHAMELEON_BUCKET, str(local_path)],
-            capture_output=True, text=True, env=env, timeout=30
-        )
-        if result.returncode == 0:
-            CHAMELEON_MIRROR_SUCCESS.set(1)
-            print(f'[chameleon] mirrored {local_path.name} -> {CHAMELEON_BUCKET}/{object_name}')
-        else:
+        conn = chameleon_connection()
+        if conn is None:
+            print('[chameleon] connection unavailable, skipping mirror')
             CHAMELEON_MIRROR_SUCCESS.set(0)
-            print(f'[chameleon] mirror failed: {result.stderr}')
+            return
+        conn.object_store.upload_object(
+            container=CHAMELEON_BUCKET,
+            name=object_name,
+            filename=str(local_path),
+        )
+        CHAMELEON_MIRROR_SUCCESS.set(1)
+        print(f'[chameleon] mirrored {local_path.name} -> {CHAMELEON_BUCKET}/{object_name}')
     except Exception as exc:
         CHAMELEON_MIRROR_SUCCESS.set(0)
         print(f'[chameleon] mirror error: {exc}')
@@ -204,6 +195,21 @@ def object_storage_client():
         endpoint_url=endpoint,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
+    )
+
+
+@lru_cache(maxsize=1)
+def chameleon_connection():
+    if not CHAMELEON_CREDENTIAL_ID or not CHAMELEON_CREDENTIAL_SECRET:
+        return None
+    return connection.Connection(
+        auth_url=CHAMELEON_AUTH_URL,
+        auth_type='v3applicationcredential',
+        application_credential_id=CHAMELEON_CREDENTIAL_ID,
+        application_credential_secret=CHAMELEON_CREDENTIAL_SECRET,
+        region_name='CHI@TACC',
+        interface='public',
+        identity_api_version='3',
     )
 
 
