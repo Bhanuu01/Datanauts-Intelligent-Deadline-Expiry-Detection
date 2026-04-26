@@ -3,6 +3,12 @@ resource "random_password" "k3s_token" {
   special = false
 }
 
+locals {
+  control_plane_name = "${var.cluster_name}-controlnode"
+  worker_name        = "${var.cluster_name}-workernode1"
+  router_name        = "${var.cluster_name}-router"
+}
+
 data "openstack_networking_network_v2" "external" {
   name = var.external_network_name
 }
@@ -89,7 +95,7 @@ resource "openstack_networking_secgroup_rule_v2" "intra_cluster_icmp_ingress" {
 }
 
 resource "openstack_networking_router_v2" "cluster" {
-  name                = var.router_name
+  name                = local.router_name
   admin_state_up      = true
   external_network_id = data.openstack_networking_network_v2.external.id
 }
@@ -122,13 +128,13 @@ resource "openstack_networking_floatingip_v2" "worker" {
 }
 
 resource "openstack_compute_instance_v2" "control_plane" {
-  name        = var.control_plane_name
-  image_name  = var.image_name
-  flavor_id   = var.control_plane_reservation_id
-  key_pair    = var.ssh_keypair_name
+  name       = local.control_plane_name
+  image_name = var.image_name
+  flavor_id  = var.control_plane_reservation_id
+  key_pair   = var.ssh_keypair_name
 
   user_data = templatefile("${path.module}/templates/node-cloud-init.yaml.tftpl", {
-    node_name = var.control_plane_name
+    node_name = local.control_plane_name
   })
 
   network {
@@ -146,13 +152,13 @@ resource "openstack_compute_instance_v2" "control_plane" {
 }
 
 resource "openstack_compute_instance_v2" "worker" {
-  name        = var.worker_name
-  image_name  = var.image_name
-  flavor_id   = var.worker_reservation_id
-  key_pair    = var.ssh_keypair_name
+  name       = local.worker_name
+  image_name = var.image_name
+  flavor_id  = var.worker_reservation_id
+  key_pair   = var.ssh_keypair_name
 
   user_data = templatefile("${path.module}/templates/node-cloud-init.yaml.tftpl", {
-    node_name = var.worker_name
+    node_name = local.worker_name
   })
 
   network {

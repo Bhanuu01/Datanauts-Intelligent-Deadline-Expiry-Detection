@@ -20,12 +20,15 @@ That flow:
 4. installs and joins `k3s`
 5. fetches a local kubeconfig ready for `kubectl`
 
-The design is based on the Chameleon details visible in your screenshots:
+Before running it, fill in `infra/terraform/openstack/terraform.tfvars` with your own:
 
-- private network: `network_proj11`
-- private network ID: `6f076311-d633-4455-999e-b95fedb86a7d`
-- control-plane lease ID: `7cb53d22-1f26-406f-9b00-e77c9bdb3d5e`
-- worker lease ID: `938578cf-ed9c-467f-8204-300032edec9e`
-- default flavor: `m1.xlarge`
+- target region
+- private network and subnet IDs
+- subnet CIDR
+- image name
+- OpenStack keypair name
+- local SSH private key path
+- control-plane and worker lease IDs
+- control-plane and worker reservation flavor IDs
 
-This stack assumes your leases already exist and are active. It does not create or extend Chameleon leases.
+This stack assumes your leases already exist and are active. It does not create or extend Chameleon leases for you.

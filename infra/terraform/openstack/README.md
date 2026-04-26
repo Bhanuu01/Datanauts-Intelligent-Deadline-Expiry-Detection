@@ -29,16 +29,25 @@ Or use the repo wrapper:
 
 ## Required values to fill in
 
+- `region`
+- `cluster_name`
+- `private_network_id`
+- `private_network_name`
+- `private_subnet_id`
+- `private_subnet_cidr`
 - `external_network_name`
 - `image_name`
-- confirm the exact OpenStack keypair name if it differs from `id_rsa_chameleon`
-- choose which local private key to use: `~/.ssh/id_rsa_chameleon` or `~/.ssh/id_rsa_chameleon_2`
+- `ssh_keypair_name`
+- `ssh_private_key_path`
+- `control_plane_lease_id`
+- `control_plane_reservation_id`
+- `worker_lease_id`
+- `worker_reservation_id`
+
+The reservation IDs above are the leased flavor IDs returned by Chameleon / Blazar for your active reservations. On `KVM@TACC`, the instances launch directly with those reservation flavor IDs.
 
 ## Notes
 
-- The default values already reflect the network and lease details from your screenshots.
-- The defaults also include the current subnet ID and the two reservation IDs from your screenshots.
-- On KVM@TACC, those reservation IDs are used as the leased flavor IDs when launching the two instances.
-- The default region is `KVM@TACC` to match the KVM OpenStack endpoint and app credential flow.
-- The defaults assume one control plane and one worker, both on `m1.xlarge`.
-- You can change the two node flavors independently if you want to right-size the cluster later.
+- This stack assumes your leases already exist and are active. It does not create or extend Chameleon leases.
+- Instance and router names are derived from `cluster_name`, so a cluster named `demo` becomes `demo-controlnode`, `demo-workernode1`, and `demo-router`.
+- `infra-up.sh` expects a filled-in `infra/terraform/openstack/terraform.tfvars` plus sourced OpenStack credentials.

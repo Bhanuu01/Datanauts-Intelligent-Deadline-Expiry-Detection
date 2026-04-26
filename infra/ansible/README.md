@@ -14,6 +14,8 @@ Manual run:
 ansible-playbook -i infra/ansible/inventory/inventory.ini infra/ansible/playbooks/bootstrap-k3s.yml
 ```
 
+The generated inventory should not be edited by hand for normal use. Regenerate it from Terraform outputs after each successful `terraform apply`.
+
 Expected inventory groups:
 
 - `control_plane`

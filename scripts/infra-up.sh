@@ -27,6 +27,12 @@ if [ ! -f "${TF_DIR}/terraform.tfvars" ]; then
   exit 1
 fi
 
+if grep -Eq 'replace-(me|with-your-)' "${TF_DIR}/terraform.tfvars"; then
+  echo "${TF_DIR}/terraform.tfvars still contains placeholder values."
+  echo "Fill in your real Chameleon network, reservation, keypair, and SSH key values first."
+  exit 1
+fi
+
 terraform -chdir="${TF_DIR}" init
 terraform -chdir="${TF_DIR}" apply -auto-approve
 
