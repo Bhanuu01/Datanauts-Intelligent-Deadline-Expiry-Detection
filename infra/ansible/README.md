@@ -1,0 +1,21 @@
+# Ansible Bootstrap
+
+This directory bootstraps the Kubernetes layer after Terraform provisions the nodes.
+
+Current playbook:
+
+- `playbooks/bootstrap-k3s.yml`: installs `k3s` on the control-plane node and joins one worker
+
+The inventory is generated automatically by `scripts/generate-ansible-inventory.sh` from Terraform outputs.
+
+Manual run:
+
+```bash
+ansible-playbook -i infra/ansible/inventory/inventory.ini infra/ansible/playbooks/bootstrap-k3s.yml
+```
+
+Expected inventory groups:
+
+- `control_plane`
+- `workers`
+- `k3s_cluster`

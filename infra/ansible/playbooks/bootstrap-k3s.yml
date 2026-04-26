@@ -1,0 +1,179 @@
+---
+- name: Prepare all nodes
+  hosts: k3s_cluster
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for SSH to become reachable
+      ansible.builtin.wait_for_connection:
+        delay: 10
+        sleep: 5
+        timeout: 600
+
+    - name: Gather facts after SSH is ready
+      ansible.builtin.setup:
+
+    - name: Install base packages
+      ansible.builtin.package:
+        name:
+          - curl
+        state: present
+
+    - name: Disable swap if present
+      ansible.builtin.command: swapoff -a
+      changed_when: false
+      failed_when: false
+
+    - name: Comment swap entries in fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\sswap\s+.*)$'
+        replace: '# \1'
+
+    - name: Persist required kernel modules
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k3s.conf
+        mode: "0644"
+        content: |
+          overlay
+          br_netfilter
+
+    - name: Load overlay kernel module
+      ansible.builtin.command: modprobe overlay
+      changed_when: false
+
+    - name: Load br_netfilter kernel module
+      ansible.builtin.command: modprobe br_netfilter
+      changed_when: false
+
+    - name: Configure Kubernetes sysctl settings
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-kubernetes-cri.conf
+        mode: "0644"
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward = 1
+
+    - name: Apply sysctl settings
+      ansible.builtin.command: sysctl --system
+      changed_when: false
+
+    - name: Check whether firewalld CLI exists
+      ansible.builtin.command: which firewall-cmd
+      register: firewall_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: Check whether firewalld is active
+      ansible.builtin.command: systemctl is-active firewalld
+      register: firewalld_active
+      changed_when: false
+      failed_when: false
+      when: firewall_cmd.rc == 0
+
+    - name: Open common cluster and ingress ports in firewalld
+      ansible.builtin.shell: |
+        firewall-cmd --permanent --add-port=80/tcp
+        firewall-cmd --permanent --add-port=443/tcp
+        firewall-cmd --permanent --add-port=10250/tcp
+        firewall-cmd --permanent --add-port=8472/udp
+      args:
+        executable: /bin/bash
+      when:
+        - firewall_cmd.rc == 0
+        - firewalld_active.stdout | default("") | trim == "active"
+      changed_when: true
+
+- name: Bootstrap control plane
+  hosts: control_plane
+  become: true
+  tasks:
+    - name: Open k3s API port in firewalld on the control plane
+      ansible.builtin.shell: |
+        firewall-cmd --permanent --add-port=6443/tcp
+        firewall-cmd --reload
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Check whether k3s server is already installed
+      ansible.builtin.stat:
+        path: /etc/systemd/system/k3s.service
+      register: k3s_server_service
+
+    - name: Install k3s server
+      ansible.builtin.shell: >
+        curl -sfL https://get.k3s.io |
+        K3S_TOKEN='{{ k3s_token }}'
+        sh -s - server
+        --write-kubeconfig-mode 644
+        --node-name {{ node_name | default(inventory_hostname) }}
+        --node-ip {{ private_ip }}
+        --tls-san {{ ansible_host }}
+        --tls-san {{ private_ip }}
+      args:
+        executable: /bin/bash
+      when: not k3s_server_service.stat.exists
+
+    - name: Wait for k3s service unit to become active
+      ansible.builtin.command: systemctl is-active k3s
+      register: k3s_service_active
+      retries: 60
+      delay: 5
+      until: k3s_service_active.stdout | trim == "active"
+      changed_when: false
+
+    - name: Wait for kubeconfig to be written
+      ansible.builtin.stat:
+        path: /etc/rancher/k3s/k3s.yaml
+      register: k3s_kubeconfig
+      retries: 60
+      delay: 5
+      until: k3s_kubeconfig.stat.exists
+      changed_when: false
+
+    - name: Wait for k3s server node to report ready
+      ansible.builtin.shell: /usr/local/bin/k3s kubectl get node {{ node_name | default(inventory_hostname) }} --no-headers
+      args:
+        executable: /bin/bash
+      register: control_plane_ready
+      retries: 60
+      delay: 10
+      until: control_plane_ready.rc == 0
+      changed_when: false
+
+- name: Join worker nodes
+  hosts: workers
+  become: true
+  tasks:
+    - name: Check whether k3s agent is already installed
+      ansible.builtin.stat:
+        path: /etc/systemd/system/k3s-agent.service
+      register: k3s_agent_service
+
+    - name: Install k3s agent
+      ansible.builtin.shell: >
+        curl -sfL https://get.k3s.io |
+        K3S_URL='https://{{ k3s_control_plane_ip }}:6443'
+        K3S_TOKEN='{{ k3s_token }}'
+        sh -s - agent
+        --node-name {{ node_name | default(inventory_hostname) }}
+        --node-ip {{ private_ip }}
+      args:
+        executable: /bin/bash
+      when: not k3s_agent_service.stat.exists
+
+- name: Verify cluster node count
+  hosts: control_plane
+  become: true
+  tasks:
+    - name: Wait until both nodes are registered
+      ansible.builtin.shell: /usr/local/bin/k3s kubectl get nodes --no-headers | wc -l
+      args:
+        executable: /bin/bash
+      register: cluster_node_count
+      retries: 30
+      delay: 10
+      until: (cluster_node_count.stdout | trim | int) >= 2
+      changed_when: false

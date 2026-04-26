@@ -1,0 +1,5 @@
+#cloud-config
+package_update: true
+
+runcmd:
+  - hostnamectl set-hostname ${node_name}

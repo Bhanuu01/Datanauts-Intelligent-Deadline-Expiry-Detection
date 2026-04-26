@@ -1,0 +1,39 @@
+#!/bin/bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TF_DIR="${REPO_ROOT}/infra/terraform/openstack"
+ANSIBLE_DIR="${REPO_ROOT}/infra/ansible"
+
+if ! command -v terraform >/dev/null 2>&1; then
+  echo "terraform is required but not installed."
+  exit 1
+fi
+
+if ! command -v ansible-playbook >/dev/null 2>&1; then
+  echo "ansible-playbook is required but not installed."
+  exit 1
+fi
+
+if [ -z "${OS_CLOUD:-}" ] && [ -z "${OS_AUTH_URL:-}" ]; then
+  echo "OpenStack credentials are not loaded."
+  echo "Source your Chameleon openrc file first, or export OS_CLOUD / OS_AUTH_URL and related OS_* variables."
+  exit 1
+fi
+
+if [ ! -f "${TF_DIR}/terraform.tfvars" ]; then
+  echo "Missing ${TF_DIR}/terraform.tfvars"
+  echo "Create it from infra/terraform/openstack/terraform.tfvars.example first."
+  exit 1
+fi
+
+terraform -chdir="${TF_DIR}" init
+terraform -chdir="${TF_DIR}" apply -auto-approve
+
+"${REPO_ROOT}/scripts/generate-ansible-inventory.sh"
+ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook -i "${ANSIBLE_DIR}/inventory/inventory.ini" "${ANSIBLE_DIR}/playbooks/bootstrap-k3s.yml"
+"${REPO_ROOT}/scripts/fetch-kubeconfig.sh"
+
+echo
+echo "Infrastructure and k3s bootstrap completed."
+echo "Kubeconfig: ${ANSIBLE_DIR}/inventory/$(terraform -chdir="${TF_DIR}" output -raw cluster_name).kubeconfig.yaml"

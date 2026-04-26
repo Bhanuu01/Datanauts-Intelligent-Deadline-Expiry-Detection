@@ -1,2 +1,9 @@
 __pycache__/
 *.py[cod]
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+terraform.tfvars
+infra/ansible/inventory/inventory.ini
+infra/ansible/inventory/*.kubeconfig.yaml

@@ -1,0 +1,16 @@
+[control_plane]
+control-plane ansible_host=203.0.113.10 private_ip=10.0.0.10 node_name=mlproject11_controlnode
+
+[workers]
+worker-1 ansible_host=203.0.113.11 private_ip=10.0.0.11 node_name=mlproject11_workernode1
+
+[k3s_cluster:children]
+control_plane
+workers
+
+[k3s_cluster:vars]
+ansible_user=cc
+ansible_ssh_private_key_file=~/.ssh/id_rsa_chameleon
+cluster_name=mlproject11
+k3s_token=replace-me
+k3s_control_plane_ip=10.0.0.10
