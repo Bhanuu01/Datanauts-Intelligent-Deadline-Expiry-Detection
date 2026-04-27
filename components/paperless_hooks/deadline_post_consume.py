@@ -84,9 +84,12 @@ def patch_document_tags(document_id: int, existing_tags: List[int], extra_tag_id
 
 
 def call_inference(document_id: int, content: str, document_type: str | None, filename: str | None) -> Dict[str, Any]:
+    # Normalize OCR text to improve model date recognition (e.g., 3/28/12 -> March 28, 2012)
+    normalized_content = normalize_ocr_text_for_model(content)
+
     payload = {
         "document_id": str(document_id),
-        "ocr_text": content,
+        "ocr_text": normalized_content,
         "document_type": document_type or "unknown",
         "filename": filename or f"document-{document_id}.pdf",
     }
@@ -142,6 +145,160 @@ def build_tags(result: Dict[str, Any]) -> List[str]:
         tags.extend(build_event_tags(event))
 
     return sorted(set(tags))
+
+
+def normalize_ocr_text_for_model(text: str) -> str:
+    """
+    Normalize OCR text to improve model date recognition.
+    Converts various date formats to month-name format (March 28, 2012)
+    that the NER model was trained to recognize.
+    
+    Handles:
+    - Slash-separated with year: 3/28/12, 03/28/2012
+    - Slash-separated without year: 3/14, 5/27 (adds current year 2026)
+    - Written dates with year: November 30, 2012, Nov 30 2012
+    - Written dates without year: November 30th, December 10 (adds current year 2026)
+    - Variations: Nov/Nov./November, with/without commas, with/without ordinal suffixes (st/nd/rd/th)
+    """
+    from datetime import datetime
+
+    # Current year for dates without year specified
+    current_year = 2026
+
+    month_names = {
+        1: "January", 2: "February", 3: "March", 4: "April",
+        5: "May", 6: "June", 7: "July", 8: "August",
+        9: "September", 10: "October", 11: "November", 12: "December"
+    }
+
+    # Reverse mapping for month name to number
+    month_abbrev = {
+        "jan": 1, "january": 1,
+        "feb": 2, "february": 2,
+        "mar": 3, "march": 3,
+        "apr": 4, "april": 4,
+        "may": 5,
+        "jun": 6, "june": 6,
+        "jul": 7, "july": 7,
+        "aug": 8, "august": 8,
+        "sep": 9, "sept": 9, "september": 9,
+        "oct": 10, "october": 10,
+        "nov": 11, "november": 11,
+        "dec": 12, "december": 12
+    }
+
+    def convert_slash_date_with_year(match):
+        """Convert m/d/yy or mm/dd/yyyy to Month d, yyyy"""
+        parts = match.group(0).split('/')
+        try:
+            month, day = int(parts[0]), int(parts[1])
+            year = int(parts[2])
+            # Handle 2-digit years: 00-30 -> 2000-2030, 31-99 -> 1931-1999
+            if year < 100:
+                year = 2000 + year if year <= 30 else 1900 + year
+
+            if 1 <= month <= 12 and 1 <= day <= 31:
+                month_name = month_names[month]
+                return f"{month_name} {day}, {year}"
+        except (ValueError, KeyError):
+            pass
+        return match.group(0)
+
+    def convert_slash_date_no_year(match):
+        """Convert m/d or mm/dd to Month d, 2026 (current year)"""
+        parts = match.group(0).split('/')
+        try:
+            month, day = int(parts[0]), int(parts[1])
+            if 1 <= month <= 12 and 1 <= day <= 31:
+                month_name = month_names[month]
+                return f"{month_name} {day}, {current_year}"
+        except (ValueError, KeyError):
+            pass
+        return match.group(0)
+
+    def convert_written_date_with_year(match):
+        """Convert written dates with year: November 30, 2012 or Nov 30 2012"""
+        text_match = match.group(0)
+        # Extract month name (with or without period)
+        month_match = re.search(r'\b([a-z]+)\.?', text_match, re.IGNORECASE)
+        if not month_match:
+            return text_match
+        
+        month_str = month_match.group(1).lower()
+        month_num = month_abbrev.get(month_str)
+        if not month_num:
+            return text_match
+        
+        # Extract day (with or without ordinal suffix)
+        day_match = re.search(r'\b(\d{1,2})(?:st|nd|rd|th)?\b', text_match)
+        if not day_match:
+            return text_match
+        
+        day = int(day_match.group(1))
+        if not (1 <= day <= 31):
+            return text_match
+        
+        # Extract year
+        year_match = re.search(r'\b(19\d{2}|20\d{2})\b', text_match)
+        if not year_match:
+            return text_match
+        
+        year = int(year_match.group(1))
+        month_name = month_names[month_num]
+        return f"{month_name} {day}, {year}"
+
+    def convert_written_date_no_year(match):
+        """Convert written dates without year: November 30th, December 10"""
+        text_match = match.group(0)
+        # Extract month name (with or without period)
+        month_match = re.search(r'\b([a-z]+)\.?', text_match, re.IGNORECASE)
+        if not month_match:
+            return text_match
+        
+        month_str = month_match.group(1).lower()
+        month_num = month_abbrev.get(month_str)
+        if not month_num:
+            return text_match
+        
+        # Extract day (with or without ordinal suffix)
+        day_match = re.search(r'\b(\d{1,2})(?:st|nd|rd|th)?\b', text_match)
+        if not day_match:
+            return text_match
+        
+        day = int(day_match.group(1))
+        if not (1 <= day <= 31):
+            return text_match
+        
+        month_name = month_names[month_num]
+        return f"{month_name} {day}, {current_year}"
+
+    # Apply normalizations in order of specificity
+    normalized = text
+    
+    # 1. Slash dates with year: m/d/yy or mm/dd/yyyy
+    normalized = re.sub(r'\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b', convert_slash_date_with_year, normalized)
+    
+    # 2. Written dates with year: Month d, yyyy or Month d yyyy (handles Jan, January, etc.)
+    normalized = re.sub(
+        r'\b(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\s*,?\s*(19\d{2}|20\d{2})\b',
+        convert_written_date_with_year,
+        normalized,
+        flags=re.IGNORECASE
+    )
+    
+    # 3. Written dates without year: Month d, or Month dth (handles Jan, January, etc.)
+    # Negative lookahead to avoid matching dates that already have years nearby
+    normalized = re.sub(
+        r'\b(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b(?!\s*,?\s*(?:19|20)\d{2})',
+        convert_written_date_no_year,
+        normalized,
+        flags=re.IGNORECASE
+    )
+    
+    # 4. Slash dates without year: m/d or mm/dd (must come after year-based ones)
+    normalized = re.sub(r'\b(\d{1,2})/(\d{1,2})(?!/)\b', convert_slash_date_no_year, normalized)
+    
+    return normalized
 
 
 def normalize_deadline_date(raw_date: str) -> str:
@@ -250,6 +407,8 @@ def resolve_document_id() -> int:
 
 
 def main() -> int:
+    import time
+
     document_id = resolve_document_id()
     try:
         if ASYNC_ENABLED and os.getenv(ASYNC_CHILD_ENV) != "1":
@@ -257,8 +416,27 @@ def main() -> int:
             print(f"Queued asynchronous deadline inference for document {document_id}.")
             return 0
 
-        document = get_document(document_id)
-        content = (document.get("content") or "").strip()
+        # Retry fetching document content (handle race condition with Paperless OCR)
+        content = ""
+        max_retries = 5
+        retry_delay = 1.0  # seconds
+
+        for attempt in range(max_retries):
+            document = get_document(document_id)
+            content = (document.get("content") or "").strip()
+
+            if content:
+                if attempt > 0:
+                    print(f"Document {document_id} content available after {attempt} retry/retries.")
+                break
+
+            if attempt < max_retries - 1:
+                print(f"Document {document_id} content not yet available; retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+            else:
+                print(f"No OCR content available for document {document_id} after {max_retries} retries; skipping inference.")
+                return 0
+
         if not content:
             print(f"No OCR content available for document {document_id}; skipping inference.")
             return 0

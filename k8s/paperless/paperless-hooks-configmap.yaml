@@ -78,9 +78,12 @@ data:
         request_json("PATCH", f"{PAPERLESS_URL}/api/documents/{document_id}/", {"tags": merged_tags})
 
     def call_inference(document_id: int, content: str, document_type: str | None, filename: str | None) -> Dict[str, Any]:
+        # Normalize OCR text to improve model date recognition (e.g., 3/28/12 -> March 28, 2012)
+        normalized_content = normalize_ocr_text_for_model(content)
+        
         payload = {
             "document_id": str(document_id),
-            "ocr_text": content,
+            "ocr_text": normalized_content,
             "document_type": document_type or "unknown",
             "filename": filename or f"document-{document_id}.pdf",
         }
@@ -121,6 +124,40 @@ data:
         )
         with urllib.request.urlopen(request, timeout=15):
             return
+
+    def normalize_ocr_text_for_model(text: str) -> str:
+        """
+        Normalize OCR text to improve model date recognition.
+        Converts slash-separated dates (3/28/12) to month-name format (March 28, 2012)
+        that the NER model was trained to recognize.
+        """
+        from datetime import datetime
+        
+        month_names = {
+            1: "January", 2: "February", 3: "March", 4: "April",
+            5: "May", 6: "June", 7: "July", 8: "August",
+            9: "September", 10: "October", 11: "November", 12: "December"
+        }
+        
+        def convert_slash_date(match):
+            parts = match.group(0).split('/')
+            try:
+                month, day = int(parts[0]), int(parts[1])
+                year = int(parts[2])
+                # Handle 2-digit years: 00-30 -> 2000-2030, 31-99 -> 1931-1999
+                if year < 100:
+                    year = 2000 + year if year <= 30 else 1900 + year
+                
+                if 1 <= month <= 12 and 1 <= day <= 31:
+                    month_name = month_names[month]
+                    return f"{month_name} {day}, {year}"
+            except (ValueError, KeyError):
+                pass
+            return match.group(0)
+        
+        # Match slash-separated dates: m/d/yy or mm/dd/yyyy
+        normalized = re.sub(r'\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b', convert_slash_date, text)
+        return normalized
 
     def normalize_deadline_date(raw_date: str) -> str:
         cleaned = raw_date.strip()
@@ -232,57 +269,78 @@ data:
         raise KeyError("DOCUMENT_ID")
 
     def main() -> int:
-        document_id = resolve_document_id()
-        try:
-            if ASYNC_ENABLED and os.getenv(ASYNC_CHILD_ENV) != "1":
-                spawn_async_worker(document_id)
-                print(f"Queued asynchronous deadline inference for document {document_id}.")
-                return 0
+      import time
 
-            document = get_document(document_id)
-            content = (document.get("content") or "").strip()
-            if not content:
-                print(f"No OCR content available for document {document_id}; skipping inference.")
-                return 0
+      document_id = resolve_document_id()
+      try:
+          if ASYNC_ENABLED and os.getenv(ASYNC_CHILD_ENV) != "1":
+              spawn_async_worker(document_id)
+              print(f"Queued asynchronous deadline inference for document {document_id}.")
+              return 0
 
-            filename = document.get("original_file_name") or document.get("archived_file_name")
-            try:
-                post_ingest_event(
-                    document_id=document_id,
-                    content=content,
-                    document_type=document.get("document_type"),
-                    filename=filename,
-                )
-            except Exception as exc:
-                print(f"Ingest capture failed for document {document_id}: {exc}", file=sys.stderr)
+          # Retry fetching document content (handle race condition with Paperless OCR)
+          content = ""
+          max_retries = 5
+          retry_delay = 1.0  # seconds
 
-            try:
-                result = call_inference(
-                    document_id=document_id,
-                    content=content,
-                    document_type=document.get("document_type"),
-                    filename=filename,
-                )
-                persist_result(document_id, result)
-                record_feedback_events(document_id, result)
-            except Exception as exc:
-                print(
-                    f"Skipping deadline inference for document {document_id} after non-fatal error: {exc}",
-                    file=sys.stderr,
-                )
-                return 0
+          for attempt in range(max_retries):
+              document = get_document(document_id)
+              content = (document.get("content") or "").strip()
 
-            tag_names = build_tags(result)
-            ensure_tag(FEEDBACK_CORRECT_TAG)
-            ensure_tag(FEEDBACK_WRONG_TAG)
-            if tag_names:
-                tag_ids = [ensure_tag(name) for name in tag_names]
-                patch_document_tags(document_id, document.get("tags", []), tag_ids)
-                print(f"Updated document {document_id} with tags: {', '.join(tag_names)}")
-            else:
-                print(f"No deadline tags added for document {document_id}.")
+              if content:
+                  if attempt > 0:
+                      print(f"Document {document_id} content available after {attempt} retry/retries.")
+                  break
 
-            return 0
+              if attempt < max_retries - 1:
+                  print(f"Document {document_id} content not yet available; retrying in {retry_delay}s...")
+                  time.sleep(retry_delay)
+              else:
+                  print(f"No OCR content available for document {document_id} after {max_retries} retries; skipping inference.")
+                  return 0
+
+          if not content:
+              print(f"No OCR content available for document {document_id}; skipping inference.")
+              return 0
+
+          filename = document.get("original_file_name") or document.get("archived_file_name")
+          try:
+              post_ingest_event(
+                  document_id=document_id,
+                  content=content,
+                  document_type=document.get("document_type"),
+                  filename=filename,
+              )
+          except Exception as exc:
+              print(f"Ingest capture failed for document {document_id}: {exc}", file=sys.stderr)
+
+          try:
+              result = call_inference(
+                  document_id=document_id,
+                  content=content,
+                  document_type=document.get("document_type"),
+                  filename=filename,
+              )
+              persist_result(document_id, result)
+              record_feedback_events(document_id, result)
+          except Exception as exc:
+              print(
+                  f"Skipping deadline inference for document {document_id} after non-fatal error: {exc}",
+                  file=sys.stderr,
+              )
+              return 0
+
+          tag_names = build_tags(result)
+          ensure_tag(FEEDBACK_CORRECT_TAG)
+          ensure_tag(FEEDBACK_WRONG_TAG)
+          if tag_names:
+              tag_ids = [ensure_tag(name) for name in tag_names]
+              patch_document_tags(document_id, document.get("tags", []), tag_ids)
+              print(f"Updated document {document_id} with tags: {', '.join(tag_names)}")
+          else:
+              print(f"No deadline tags added for document {document_id}.")
+
+          return 0
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             print(f"HTTP error during post-consume hook: {exc.code} {body}", file=sys.stderr)
