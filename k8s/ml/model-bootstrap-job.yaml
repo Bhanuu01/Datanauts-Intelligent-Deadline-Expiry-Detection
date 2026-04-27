@@ -14,7 +14,6 @@ spec:
         - name: model-bootstrap
           image: ghcr.io/bhanuu01/datanauts-platform-automation:latest
           imagePullPolicy: Always
-          imagePullPolicy: Always
           command: ["python", "/app/components/platform_automation/run_retrain_cycle.py"]
           env:
             - name: FORCE_RETRAIN
