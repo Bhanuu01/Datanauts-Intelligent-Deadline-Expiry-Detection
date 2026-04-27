@@ -165,6 +165,8 @@ jobs:
   lifecycle-dry-run:
     needs: validate
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -181,13 +183,10 @@ jobs:
 
       - name: Create dry-run lifecycle inputs
         run: |
-          mkdir -p /tmp/lifecycle-data/model-releases/candidate-001/ner
-          mkdir -p /tmp/lifecycle-data/model-releases/candidate-001/classifier
-          mkdir -p /tmp/lifecycle-data/ner
-          mkdir -p /tmp/lifecycle-data/classifier
-          printf '{"ner_f1":0.81,"clf_macro_f1":0.84,"e2e_coverage":0.72,"false_alarm_count":2,"candidate_latency_p95_ms":120,"candidate_version":"candidate-001","candidate_paths":{"ner":"/tmp/lifecycle-data/model-releases/candidate-001/ner","classifier":"/tmp/lifecycle-data/model-releases/candidate-001/classifier"}}' > /tmp/lifecycle-data/evaluation_metrics.json
+          mkdir -p /tmp/lifecycle-data
+          printf '{"ner_f1":0.81,"clf_macro_f1":0.84,"e2e_coverage":0.72,"false_alarm_count":2,"candidate_latency_p95_ms":120,"candidate_version":"candidate-001","candidate_bundle_s3_key":"releases/candidate-001/bundle.tar.gz","registration_eligible":true,"training_quality_gate":{"eligible":true,"failed_gates":[]},"model_registry":{"ner":{"registered_model":"deadline-ner","version":"2"},"classifier":{"registered_model":"deadline-classifier","version":"2"}}}' > /tmp/lifecycle-data/evaluation_metrics.json
           printf '{"live_error_rate":0.01,"live_latency_p95_ms":180,"live_correction_rate_7d":0.02}' > /tmp/lifecycle-data/serving_metrics.json
-          printf '{"current_version":"bootstrap","previous_version":null,"current_stage":"staging"}' > /tmp/lifecycle-data/release_state.json
+          printf '{"current_version":"bootstrap","previous_version":null,"current_stage":"staging","current_bundle_s3_key":"releases/bootstrap/bundle.tar.gz","current_model_registry":{}}' > /tmp/lifecycle-data/release_state.json
 
       - name: Evaluate promotion gate
         run: |
@@ -211,8 +210,17 @@ jobs:
         run: |
           test -f /tmp/lifecycle-data/release_plan.json
           test -f /tmp/lifecycle-data/release_state.json
-          test -d /tmp/lifecycle-data/ner
-          test -d /tmp/lifecycle-data/classifier
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          release_plan = json.loads(Path('/tmp/lifecycle-data/release_plan.json').read_text())
+          release_state = json.loads(Path('/tmp/lifecycle-data/release_state.json').read_text())
+          assert release_plan['action'] == 'promote'
+          assert release_plan['applied'] is True
+          assert release_state['current_version'] == 'candidate-001'
+          assert release_state['current_bundle_s3_key'] == 'releases/candidate-001/bundle.tar.gz'
+          assert release_state['current_stage'] == 'canary'
+          PY
 
   deploy-chameleon:
     needs:
