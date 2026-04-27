@@ -205,14 +205,14 @@ jobs:
     needs:
       - build-images
       - lifecycle-dry-run
-    if: github.event_name != 'pull_request' && secrets.KUBECONFIG_B64 != '' && secrets.DEPLOY_PUBLIC_HOST != ''
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     env:
       OS_APPLICATION_CREDENTIAL_ID: ${{ secrets.OS_APPLICATION_CREDENTIAL_ID }}
       OS_APPLICATION_CREDENTIAL_SECRET: ${{ secrets.OS_APPLICATION_CREDENTIAL_SECRET }}
       PUBLIC_HOST: ${{ secrets.DEPLOY_PUBLIC_HOST }}
       CONTROL_PLANE_PUBLIC_IP: ${{ secrets.DEPLOY_PUBLIC_HOST }}
-      RUN_BOOTSTRAP_JOB: ${{ github.event_name == 'workflow_dispatch' && inputs.run_bootstrap || 'false' }}
+      RUN_BOOTSTRAP_JOB: ${{ github.event_name == 'workflow_dispatch' && inputs.run_bootstrap || false }}
       USE_EXISTING_SOURCE_SECRETS: "true"
     steps:
       - name: Checkout
@@ -222,6 +222,13 @@ jobs:
         uses: azure/setup-kubectl@v4
         with:
           version: latest
+
+      - name: Check deploy secrets
+        run: |
+          if [[ -z "${{ secrets.KUBECONFIG_B64 }}" || -z "${{ secrets.DEPLOY_PUBLIC_HOST }}" ]]; then
+            echo "KUBECONFIG_B64 and/or DEPLOY_PUBLIC_HOST are not configured; skipping deploy."
+            exit 0
+          fi
 
       - name: Configure kubectl
         run: |
