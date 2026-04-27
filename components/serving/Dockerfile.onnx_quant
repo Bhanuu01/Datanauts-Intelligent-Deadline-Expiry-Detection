@@ -7,6 +7,7 @@ COPY components/serving/requirements.onnx_quant.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY components/serving/app_onnx_quant.py /app/app_onnx_quant.py
+COPY components/common/object_store.py /app/components/common/object_store.py
 
 ENV PYTHONUNBUFFERED=1
 ENV ONNX_MODEL_PATH=/models/onnx_quantized_model

@@ -17,6 +17,8 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 from transformers import AutoTokenizer
 from transformers import pipeline
+from components.common.object_store import download_and_extract_tarball
+from components.common.object_store import object_store_enabled
 
 
 CLF_MODEL_PATH = Path(Path.cwd() / "onnx_quantized_clf")
@@ -36,6 +38,9 @@ FEEDBACK_LOG_PATH = Path(os.environ.get("FEEDBACK_LOG_PATH", "/data/serving_feed
 CONFIDENCE_THRESHOLD = float(os.environ.get("ONNX_CONFIDENCE_THRESHOLD", "0.7"))
 MAX_SENTENCES = int(os.environ.get("ONNX_MAX_SENTENCES", "40"))
 MAX_SENTENCE_CHARS = int(os.environ.get("ONNX_MAX_SENTENCE_CHARS", "512"))
+MODEL_ARTIFACT_BUCKET = os.environ.get("MODEL_ARTIFACT_BUCKET", "datanauts-models")
+MODEL_BUNDLE_S3_KEY = os.environ.get("MODEL_BUNDLE_S3_KEY", "releases/bootstrap/bundle.tar.gz")
+MODEL_LOCAL_CACHE_ROOT = Path(os.environ.get("MODEL_LOCAL_CACHE_ROOT", "/tmp/model-cache"))
 DATE_RE = re.compile(
     r"\b(?:January|February|March|April|May|June|July|August|"
     r"September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{1,2},?\s+\d{4}"
@@ -80,12 +85,48 @@ LATENCY_METRIC = Histogram(
     buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
 )
 
-clf_model = ORTModelForSequenceClassification.from_pretrained(str(CLF_MODEL_PATH))
-clf_tokenizer = AutoTokenizer.from_pretrained(str(CLF_MODEL_PATH))
+
+def resolve_model_paths() -> tuple[Path, Path]:
+    clf_path = CLF_MODEL_PATH
+    ner_path = NER_MODEL_PATH
+    if clf_path.exists() and ner_path.exists():
+        return clf_path, ner_path
+
+    if not object_store_enabled():
+        raise FileNotFoundError(
+            f"Local ONNX model directories are missing ({clf_path}, {ner_path}) and object storage is not configured."
+        )
+
+    bundle_root = download_and_extract_tarball(
+        bucket=MODEL_ARTIFACT_BUCKET,
+        key=MODEL_BUNDLE_S3_KEY,
+        cache_dir=MODEL_LOCAL_CACHE_ROOT,
+    )
+
+    candidate_roots = [bundle_root]
+    nested_root = bundle_root / "onnx_quantized_model"
+    if nested_root.exists():
+        candidate_roots.insert(0, nested_root)
+
+    for root in candidate_roots:
+        candidate_clf = root / "onnx_quantized_clf"
+        candidate_ner = root / "onnx_quantized_ner"
+        if candidate_clf.exists() and candidate_ner.exists():
+            return candidate_clf, candidate_ner
+
+    raise FileNotFoundError(
+        f"Downloaded bundle {MODEL_BUNDLE_S3_KEY} did not contain onnx_quantized_clf and onnx_quantized_ner"
+    )
+
+
+CLF_MODEL_PATH, NER_MODEL_PATH = resolve_model_paths()
+
+clf_model = ORTModelForSequenceClassification.from_pretrained(str(CLF_MODEL_PATH), local_files_only=True)
+clf_tokenizer = AutoTokenizer.from_pretrained(str(CLF_MODEL_PATH), local_files_only=True)
 clf_pipeline = pipeline("text-classification", model=clf_model, tokenizer=clf_tokenizer, top_k=None)
 
-ner_model = ORTModelForTokenClassification.from_pretrained(str(NER_MODEL_PATH))
-ner_tokenizer = AutoTokenizer.from_pretrained(str(NER_MODEL_PATH))
+ner_model = ORTModelForTokenClassification.from_pretrained(str(NER_MODEL_PATH), local_files_only=True)
+ner_tokenizer = AutoTokenizer.from_pretrained(str(NER_MODEL_PATH), local_files_only=True)
 ner_pipeline = pipeline("ner", model=ner_model, tokenizer=ner_tokenizer, aggregation_strategy="simple")
 
 
