@@ -10,19 +10,17 @@ from transformers import (
     EarlyStoppingCallback,
 )
 from seqeval.metrics import f1_score, precision_score, recall_score, classification_report
+from components.training.src.feedback_dataset import merge_ner_feedback_additions
 
 os.environ["AWS_ACCESS_KEY_ID"]      = os.getenv("AWS_ACCESS_KEY_ID", "datanauts-key")
 os.environ["AWS_SECRET_ACCESS_KEY"]  = os.getenv("AWS_SECRET_ACCESS_KEY", "datanauts-secret")
 os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv(
-    "MLFLOW_S3_ENDPOINT_URL", "http://minio.platform.svc.cluster.local:9000"
-)
+os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv("MLFLOW_S3_ENDPOINT_URL", "http://129.114.27.190:30900")
 
-MLFLOW_URI  = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.platform.svc.cluster.local:5000")
+MLFLOW_URI  = os.getenv("MLFLOW_TRACKING_URI", "http://129.114.27.190:30500")
 EXPERIMENT  = "deadline-detection-ner"
 DATA_PATH   = "./data/deadline_sentences"
 OUTPUT_DIR  = "/tmp/deadline-ner"
-REPO_ROOT   = Path(__file__).resolve().parents[3]
 
 LABEL_LIST  = [
     "O",
@@ -69,47 +67,49 @@ CONFIGS = {
         "base_model": "bert-base-cased", "epochs": 3, "learning_rate": 2e-5,
         "batch_size": 16, "max_seq_length": 256, "fp16": True,
     },
+    "contracts_bert_ner_v1": {
+        "base_model": "nlpaueb/bert-base-uncased-contracts", "epochs": 5, "learning_rate": 2e-5,
+        "batch_size": 8, "max_seq_length": 256, "fp16": True,
+    },
+    "legal_bert_ner_v1": {
+        "base_model": "nlpaueb/legal-bert-base-uncased", "epochs": 5, "learning_rate": 2e-5,
+        "batch_size": 8, "max_seq_length": 256, "fp16": True,
+    },
 }
 
 
-def _env_int(name, default=0):
-    value = os.getenv(name)
-    if not value:
-        return default
+def with_config_overrides(base_cfg, override_json=None):
+    if not override_json:
+        return dict(base_cfg)
+    overrides = json.loads(override_json)
+    merged = dict(base_cfg)
+    for key, value in overrides.items():
+        if key in merged:
+            merged[key] = value
+    return merged
+
+
+def get_optional_limit(env_name):
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        return None
     try:
-        return int(value)
+        limit = int(raw)
     except ValueError:
-        return default
+        return None
+    return limit if limit > 0 else None
 
 
-def maybe_limit_split(ds, env_var):
-    limit = _env_int(env_var, 0)
-    if limit > 0 and len(ds) > limit:
-        return ds.select(range(limit))
-    return ds
+def maybe_limit_dataset(ds, env_name):
+    limit = get_optional_limit(env_name)
+    if limit is None or len(ds) <= limit:
+        return ds
+    return ds.select(range(limit))
 
 # O-tag weight=1.0, entity tags upweighted — amplifies rare entity signal
 # (downweighting O caused false-positive explosion: recall=1.0, precision=0.01)
 # NOTICE_DATE weighted higher (12x) — rarest entity in training data
 NER_WEIGHTS = torch.tensor([1.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 12.0, 12.0])
-
-
-def resolve_base_model(default_model, env_var, fallback_dir):
-    override = os.getenv(env_var)
-    candidates = []
-    if override:
-        candidates.append(Path(override))
-    candidates.extend([
-        REPO_ROOT / "models" / fallback_dir,
-        Path("/data/base-models") / fallback_dir,
-    ])
-
-    for candidate in candidates:
-        if candidate.exists() and any(candidate.iterdir()):
-            print(f"Using local base model from {candidate}")
-            return str(candidate)
-
-    return default_model
 
 
 def set_seeds(seed=42):
@@ -136,9 +136,13 @@ def load_ner_data():
     dd        = load_from_disk(DATA_PATH)
     # Train on ALL sentences: model needs O-token context to avoid false positives
     # (non-none only = 550 sentences → model tags everything as entity)
-    train_ds  = maybe_limit_split(dd["train"].select_columns(["tokens", "ner_tags"]), "BOOTSTRAP_MAX_TRAIN_SAMPLES")
-    val_ds    = maybe_limit_split(dd["val"].select_columns(["tokens", "ner_tags"]), "BOOTSTRAP_MAX_VAL_SAMPLES")
-    test_ds   = maybe_limit_split(dd["test"].select_columns(["tokens", "ner_tags"]), "BOOTSTRAP_MAX_TEST_SAMPLES")
+    train_ds  = dd["train"].select_columns(["tokens", "ner_tags"])
+    train_ds = merge_ner_feedback_additions(train_ds)
+    val_ds    = dd["val"].select_columns(["tokens", "ner_tags"])
+    test_ds   = dd["test"].select_columns(["tokens", "ner_tags"])
+    train_ds = maybe_limit_dataset(train_ds, "BOOTSTRAP_MAX_TRAIN_SAMPLES")
+    val_ds = maybe_limit_dataset(val_ds, "BOOTSTRAP_MAX_VAL_SAMPLES")
+    test_ds = maybe_limit_dataset(test_ds, "BOOTSTRAP_MAX_TEST_SAMPLES")
     print(f"Train (all): {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)} sentences")
     return train_ds, val_ds, test_ds
 
@@ -353,16 +357,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, choices=list(CONFIGS.keys()),
                         help="Which NER model variant to run")
+    parser.add_argument("--config_json", default="",
+                        help="Optional JSON string with config overrides for this run")
     args = parser.parse_args()
 
     set_seeds(42)
-    cfg = dict(CONFIGS[args.model])
-    cfg["base_model"] = resolve_base_model(
-        cfg["base_model"], "NER_BASE_MODEL_PATH", "deadline-ner-bert_ner_v1"
-    )
-    epoch_override = _env_int("TRAIN_EPOCH_OVERRIDE", 0)
-    if epoch_override > 0:
-        cfg["epochs"] = epoch_override
+    cfg = with_config_overrides(CONFIGS[args.model], args.config_json)
     train_ds, val_ds, test_ds = load_ner_data()
 
     if args.model == "baseline":

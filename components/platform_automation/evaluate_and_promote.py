@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
+from components.common.object_store import download_json
+from components.common.object_store import object_store_enabled
+from components.common.object_store import upload_json
 
 
 DEFAULT_EVAL_PATH = "/tmp/evaluation_metrics.json"
@@ -16,6 +19,14 @@ def load_metrics() -> Dict[str, Any]:
     eval_path = Path(os.getenv("EVALUATION_METRICS_PATH", DEFAULT_EVAL_PATH))
     if eval_path.exists():
         return json.loads(eval_path.read_text())
+    if object_store_enabled():
+        try:
+            return download_json(
+                os.getenv("RUNTIME_LOG_BUCKET", "datanauts-runtime"),
+                os.getenv("EVALUATION_METRICS_S3_KEY", "automation/evaluation_metrics.json"),
+            )
+        except Exception:
+            pass
 
     return {
         "ner_f1": float(os.getenv("NER_F1", "0.0")),
@@ -31,6 +42,14 @@ def load_serving_metrics() -> Dict[str, Any]:
     metrics_path = Path(os.getenv("SERVING_METRICS_PATH", DEFAULT_SERVING_METRICS_PATH))
     if metrics_path.exists():
         return json.loads(metrics_path.read_text())
+    if object_store_enabled():
+        try:
+            return download_json(
+                os.getenv("RUNTIME_LOG_BUCKET", "datanauts-runtime"),
+                os.getenv("SERVING_METRICS_S3_KEY", "automation/serving_metrics.json"),
+            )
+        except Exception:
+            pass
 
     return {
         "live_error_rate": float(os.getenv("LIVE_ERROR_RATE", "0.0")),
@@ -53,8 +72,13 @@ def evaluate_promotion(metrics: Dict[str, Any], serving_metrics: Dict[str, Any])
     max_live_error_rate = float(os.getenv("MAX_LIVE_ERROR_RATE", "0.05"))
     max_live_latency_p95_ms = float(os.getenv("MAX_LIVE_LATENCY_P95_MS", str(max_latency)))
     max_live_correction_rate_7d = float(os.getenv("MAX_LIVE_CORRECTION_RATE_7D", "0.15"))
+    registration_eligible = bool(metrics.get("registration_eligible", False))
+    training_gate_failures = list(metrics.get("training_quality_gate", {}).get("failed_gates", []))
 
     failures: List[str] = []
+    if not registration_eligible:
+        failures.append("training_quality_gate_failed")
+        failures.extend(training_gate_failures)
     if ner_f1 < min_ner_f1:
         failures.append("ner_f1_below_threshold")
     if clf_macro_f1 < min_clf_macro_f1:
@@ -101,8 +125,15 @@ def evaluate_promotion(metrics: Dict[str, Any], serving_metrics: Dict[str, Any])
         "failed_gates": failures,
         "rollback_reasons": rollback_reasons,
         "candidate_version": metrics.get("candidate_version"),
+        "candidate_bundle_s3_key": metrics.get("candidate_bundle_s3_key"),
         "candidate_paths": metrics.get("candidate_paths", {}),
-        "candidate_quantized_paths": metrics.get("candidate_quantized_paths", {}),
+        "model_registry": metrics.get("model_registry", {}),
+        "candidate_score": metrics.get("candidate_score"),
+        "registration_eligible": registration_eligible,
+        "training_quality_gate": metrics.get("training_quality_gate", {}),
+        "exact_match_pct": metrics.get("exact_match_pct"),
+        "within_30_days_pct": metrics.get("within_30_days_pct"),
+        "cross_domain_accuracy": metrics.get("cross_domain_accuracy"),
         "reason": "candidate_meets_all_training_and_latency_gates" if promote else "candidate_failed_one_or_more_gates",
         "live_metrics": {
             "live_error_rate": live_error_rate,
@@ -117,8 +148,14 @@ def main() -> int:
     output_path = Path(os.getenv("PROMOTION_DECISION_PATH", DEFAULT_PROMOTION_PATH))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(decision, indent=2))
+    if object_store_enabled():
+        upload_json(
+            os.getenv("RUNTIME_LOG_BUCKET", "datanauts-runtime"),
+            os.getenv("PROMOTION_DECISION_S3_KEY", "automation/promotion_decision.json"),
+            decision,
+        )
     print(json.dumps(decision, indent=2))
-    return 0 if decision["promote"] else 1
+    return 0
 
 
 if __name__ == "__main__":

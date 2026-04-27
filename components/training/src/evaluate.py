@@ -19,6 +19,54 @@ os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv(
 )
 
 
+def get_optional_limit(name):
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer if set") from exc
+    return value if value > 0 else None
+
+
+def limited_test_views(raw_test_contracts, dd_test_rows):
+    eval_contract_limit = get_optional_limit("BOOTSTRAP_MAX_EVAL_CONTRACTS")
+    eval_sentence_limit = get_optional_limit("BOOTSTRAP_MAX_TEST_SAMPLES")
+
+    if not eval_contract_limit and not eval_sentence_limit:
+        return raw_test_contracts, dd_test_rows
+
+    limited_rows = dd_test_rows
+    if eval_sentence_limit:
+        limited_rows = dd_test_rows.select(range(min(eval_sentence_limit, len(dd_test_rows))))
+
+    allowed_contract_ids = []
+    seen_ids = set()
+    for row in limited_rows:
+        contract_id = row.get("contract_id", "")
+        if contract_id and contract_id not in seen_ids:
+            seen_ids.add(contract_id)
+            allowed_contract_ids.append(contract_id)
+
+    if eval_contract_limit:
+        allowed_contract_ids = allowed_contract_ids[:eval_contract_limit]
+
+    allowed_contract_ids_set = set(allowed_contract_ids)
+    limited_contracts = raw_test_contracts.filter(
+        lambda record: record.get("Filename", "") in allowed_contract_ids_set
+    )
+    limited_rows = limited_rows.filter(
+        lambda row: row.get("contract_id", "") in allowed_contract_ids_set
+    )
+    print(
+        "[INFO] Limiting end-to-end evaluation to "
+        f"{len(limited_contracts)} contracts / {len(limited_rows)} sentences "
+        "via BOOTSTRAP_MAX_EVAL_CONTRACTS/BOOTSTRAP_MAX_TEST_SAMPLES"
+    )
+    return limited_contracts, limited_rows
+
+
 def dates_within(pred_date, gt_date, window=DATE_WINDOW):
     try:
         pd = dateutil_parser.parse(pred_date)
@@ -32,7 +80,7 @@ def run_evaluation(clf_model_path, ner_model_path, threshold=0.7, candidate_late
     dd_disk  = load_from_disk(DATA_PATH)
     raw_hf   = load_dataset(DATASET_ID)
 
-    test_contracts = raw_hf["test"]
+    test_contracts, dd_test = limited_test_views(raw_hf["test"], dd_disk["test"])
 
     stats = {
         "total":                0,
@@ -48,7 +96,7 @@ def run_evaluation(clf_model_path, ner_model_path, threshold=0.7, candidate_late
     per_type = defaultdict(lambda: {"covered": 0, "exact": 0, "within_30": 0, "total_gt": 0})
 
     test_sentences_by_contract = defaultdict(list)
-    for row in dd_disk["test"]:
+    for row in dd_test:
         test_sentences_by_contract[row["contract_id"]].append({
             "sentence":         row["sentence"],
             "classifier_label": int(row["classifier_label"]),

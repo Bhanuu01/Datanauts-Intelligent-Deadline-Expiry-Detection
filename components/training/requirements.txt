@@ -10,3 +10,6 @@ huggingface-hub>=0.22.0
 accelerate>=0.29.0
 torch>=2.1.0
 numpy>=1.26.0
+tiktoken>=0.7.0
+sentencepiece>=0.2.0
+kubernetes==31.0.0

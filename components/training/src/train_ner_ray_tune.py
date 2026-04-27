@@ -1,4 +1,4 @@
-import os, time, random
+import json, os, time, random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -24,8 +24,22 @@ os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
 
 MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.platform.svc.cluster.local:5000")
 EXPERIMENT = "deadline-detection-ner-ray-tune"
-BASE_MODEL = "dslim/bert-base-NER"
 DATA_PATH  = "/app/data/deadline_sentences"
+
+NER_MODEL_CANDIDATES = {
+    "dslim_bert_base_ner": {
+        "base_model": "dslim/bert-base-NER",
+        "batch_sizes": [8, 16],
+    },
+    "contracts_bert_base": {
+        "base_model": "nlpaueb/bert-base-uncased-contracts",
+        "batch_sizes": [4, 8, 16],
+    },
+    "legal_bert_base": {
+        "base_model": "nlpaueb/legal-bert-base-uncased",
+        "batch_sizes": [4, 8, 16],
+    },
+}
 
 LABEL_LIST = [
     "O",
@@ -82,11 +96,18 @@ def compute_metrics(p):
 
 
 def train_trial(config):
+    model_key   = config["model_key"]
+    model_cfg   = NER_MODEL_CANDIDATES[model_key]
+    base_model  = model_cfg["base_model"]
     lr         = config["learning_rate"]
-    batch_size = config["batch_size"]
+    requested_batch = config["batch_size"]
+    batch_size = requested_batch
+    if batch_size not in model_cfg["batch_sizes"]:
+        eligible = [size for size in model_cfg["batch_sizes"] if size <= requested_batch]
+        batch_size = max(eligible) if eligible else min(model_cfg["batch_sizes"])
     epochs     = config["epochs"]
     max_len    = config["max_seq_length"]
-    run_name   = f"ner_lr{lr:.1e}_bs{batch_size}_ep{epochs}"
+    run_name   = f"{model_key}_ner_lr{lr:.1e}_bs{batch_size}_ep{epochs}"
 
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT)
@@ -96,7 +117,10 @@ def train_trial(config):
             "batch_size":     batch_size,
             "epochs":         epochs,
             "max_seq_length": max_len,
-            "base_model":     BASE_MODEL,
+            "model_key":      model_key,
+            "base_model":     base_model,
+            "requested_batch_size": requested_batch,
+            "effective_batch_size": batch_size,
             "search_method":  "Ray Tune ASHA",
             "num_labels":     len(LABEL_LIST),
             "label_schema":   "O|B-EXP_DATE|I-EXP_DATE|B-START_DATE|I-START_DATE|B-DURATION|I-DURATION|B-NOTICE_DATE|I-NOTICE_DATE",
@@ -105,7 +129,7 @@ def train_trial(config):
         })
 
         train_ds, val_ds, test_ds = load_ner_data()
-        tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+        tokenizer = AutoTokenizer.from_pretrained(base_model)
 
         def tokenize_and_align(examples):
             tokenized = tokenizer(
@@ -132,7 +156,7 @@ def train_trial(config):
         tok_test  = test_ds.map(tokenize_and_align,  batched=True, remove_columns=test_ds.column_names)
 
         model = AutoModelForTokenClassification.from_pretrained(
-            BASE_MODEL, num_labels=len(LABEL_LIST),
+            base_model, num_labels=len(LABEL_LIST),
             id2label=ID2LABEL, label2id=LABEL2ID,
             ignore_mismatched_sizes=True,
         )
@@ -189,8 +213,9 @@ def train_trial(config):
 def main():
     ray.init(ignore_reinit_error=True)
     search_space = {
+        "model_key":       tune.choice(list(NER_MODEL_CANDIDATES.keys())),
         "learning_rate":  tune.loguniform(1e-5, 5e-5),
-        "batch_size":     tune.choice([8, 16]),
+        "batch_size":     tune.choice([4, 8, 16]),
         "epochs":         tune.choice([3, 5]),
         "max_seq_length": tune.choice([128, 256]),
     }
@@ -207,19 +232,38 @@ def main():
             storage_path="/tmp/ray_results",
         ),
     )
-    print("\n=== Ray Tune ASHA: 8 trials on BERT NER (7-class), 2 concurrent ===\n")
+    print("\n=== Ray Tune ASHA: NER backbone search with generic + legal-domain candidates ===\n")
     results = tuner.fit()
     best    = results.get_best_result(metric="f1", mode="max")
     print(f"\n=== BEST TRIAL ===")
     print(f"  F1:            {best.metrics['f1']:.4f}")
+    print(f"  model_key:     {best.config['model_key']}")
+    print(f"  base_model:    {NER_MODEL_CANDIDATES[best.config['model_key']]['base_model']}")
     print(f"  learning_rate: {best.config['learning_rate']:.2e}")
     print(f"  batch_size:    {best.config['batch_size']}")
     print(f"  epochs:        {best.config['epochs']}")
     print(f"  max_seq_length:{best.config['max_seq_length']}")
+    best_config_out = os.getenv("BEST_CONFIG_OUT", "").strip()
+    if best_config_out:
+        payload = {
+            "model_key": best.config["model_key"],
+            "base_model": NER_MODEL_CANDIDATES[best.config["model_key"]]["base_model"],
+            "f1": best.metrics["f1"],
+            "config": best.config,
+        }
+        with open(best_config_out, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT)
     with mlflow.start_run(run_name="RAY_TUNE_NER_BEST_SUMMARY"):
-        mlflow.log_params({**best.config, "search_method": "Ray Tune ASHA", "total_trials": len(results)})
+        mlflow.log_params(
+            {
+                **best.config,
+                "base_model": NER_MODEL_CANDIDATES[best.config["model_key"]]["base_model"],
+                "search_method": "Ray Tune ASHA",
+                "total_trials": len(results),
+            }
+        )
         mlflow.log_metrics({"best_f1": best.metrics["f1"]})
     print(f"\nAll trials → {MLFLOW_URI} | Experiment: {EXPERIMENT}\n")
     ray.shutdown()
