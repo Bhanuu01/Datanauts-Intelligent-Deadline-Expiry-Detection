@@ -30,8 +30,12 @@ require_command sed
 require_command bash
 
 if [[ -z "${KUBECONFIG_PATH}" ]]; then
-  echo "KUBECONFIG must point to the target cluster kubeconfig." >&2
-  exit 1
+  if [[ -f "${HOME}/.kube/config" ]]; then
+    KUBECONFIG_PATH="${HOME}/.kube/config"
+  else
+    echo "KUBECONFIG must point to the target cluster kubeconfig." >&2
+    exit 1
+  fi
 fi
 
 if [[ -z "${CONTROL_PLANE_PUBLIC_IP}" ]]; then
