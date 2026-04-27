@@ -4,6 +4,140 @@ metadata:
   name: grafana-dashboards
   namespace: monitoring
 data:
+  data-quality-tt2884.json: |
+    {
+      "title": "Data Quality & Drift Monitoring — Tanvi Takavane (tt2884)",
+      "uid": "data-quality-tt2884",
+      "tags": ["data", "quality", "drift", "tt2884"],
+      "timezone": "browser",
+      "panels": [
+        {
+          "id": 1,
+          "title": "EP1 — Ingestion Quality Check (PASSED=1, FAILED=0)",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 8, "x": 0, "y": 0},
+          "targets": [{"expr": "data_quality_ep1_ingestion_passed", "legendFormat": "EP1 Ingestion"}],
+          "options": {"colorMode": "background", "textMode": "auto"},
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "green", "value": 1}]}}}
+        },
+        {
+          "id": 2,
+          "title": "EP2 — Training Set Quality (PASSED=1, FAILED=0)",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 8, "x": 8, "y": 0},
+          "targets": [{"expr": "data_quality_ep2_training_passed", "legendFormat": "EP2 Training"}],
+          "options": {"colorMode": "background", "textMode": "auto"},
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "green", "value": 1}]}}}
+        },
+        {
+          "id": 3,
+          "title": "EP3 — Drift Monitoring (PASSED=1, FAILED=0)",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
+          "targets": [{"expr": "data_quality_ep3_drift_passed", "legendFormat": "EP3 Drift"}],
+          "options": {"colorMode": "background", "textMode": "auto"},
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "green", "value": 1}]}}}
+        },
+        {
+          "id": 4,
+          "title": "EP1 — Ingestion Checks (Total vs Failed)",
+          "type": "bargauge",
+          "gridPos": {"h": 5, "w": 8, "x": 0, "y": 4},
+          "targets": [
+            {"expr": "data_quality_ep1_total_checks", "legendFormat": "Total Checks (12)"},
+            {"expr": "data_quality_ep1_failed_checks", "legendFormat": "Failed Checks (0)"}
+          ],
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}]}}}
+        },
+        {
+          "id": 5,
+          "title": "EP2 — Dataset Split Sizes",
+          "type": "bargauge",
+          "gridPos": {"h": 5, "w": 8, "x": 8, "y": 4},
+          "targets": [
+            {"expr": "data_quality_ep2_train_records", "legendFormat": "Train (373)"},
+            {"expr": "data_quality_ep2_val_records", "legendFormat": "Validation (68)"},
+            {"expr": "data_quality_ep2_test_records", "legendFormat": "Test (69)"}
+          ],
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": 0}]}}}
+        },
+        {
+          "id": 6,
+          "title": "EP3 — OCR Length Drift Ratio (alert > 2.0)",
+          "type": "gauge",
+          "gridPos": {"h": 5, "w": 4, "x": 16, "y": 4},
+          "targets": [{"expr": "data_quality_ep3_drift_ratio", "legendFormat": "Drift Ratio"}],
+          "fieldConfig": {"defaults": {"min": 0, "max": 3, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "yellow", "value": 1.5}, {"color": "red", "value": 2.0}]}}}
+        },
+        {
+          "id": 7,
+          "title": "EP3 — Event Type Drift (alert > 0.4)",
+          "type": "gauge",
+          "gridPos": {"h": 5, "w": 4, "x": 20, "y": 4},
+          "targets": [{"expr": "data_quality_ep3_event_type_drift", "legendFormat": "Event Drift"}],
+          "fieldConfig": {"defaults": {"min": 0, "max": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "yellow", "value": 0.3}, {"color": "red", "value": 0.4}]}}}
+        },
+        {
+          "id": 8,
+          "title": "Live Inference — Documents Ingested (Range)",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 9},
+          "targets": [{"expr": "sum(increase(online_features_ingest_requests_total[$__range])) or vector(0)", "legendFormat": "Documents"}],
+          "options": {"colorMode": "background", "graphMode": "area", "textMode": "auto", "reduceOptions": {"calcs": ["lastNotNull"]}},
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": 0}]}, "color": {"mode": "fixed", "fixedColor": "blue"}}}
+        },
+        {
+          "id": 9,
+          "title": "Live Inference — Date Candidate Rate",
+          "type": "gauge",
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 9},
+          "targets": [{"expr": "data_inference_candidate_rate", "legendFormat": "Candidate Rate"}],
+          "fieldConfig": {"defaults": {"min": 0, "max": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "yellow", "value": 0.1}, {"color": "green", "value": 0.3}]}}}
+        },
+        {
+          "id": 10,
+          "title": "Chameleon Bucket Mirror Status (1=OK, 0=Failed)",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 9},
+          "targets": [{"expr": "data_chameleon_mirror_success", "legendFormat": "cuad-data-proj11-v2"}],
+          "options": {"colorMode": "background"},
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "green", "value": 1}]}}}
+        },
+        {
+          "id": 11,
+          "title": "Redis Errors",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 9},
+          "targets": [{"expr": "online_features_redis_errors_total", "legendFormat": "Redis Errors"}],
+          "options": {"colorMode": "background", "textMode": "auto", "reduceOptions": {"calcs": ["lastNotNull"]}},
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "red", "value": 1}]}}}
+        },
+        {
+          "id": 12,
+          "title": "Ingest Request Rate (req/sec)",
+          "type": "timeseries",
+          "gridPos": {"h": 6, "w": 12, "x": 0, "y": 13},
+          "targets": [{"expr": "rate(online_features_ingest_requests_total[5m])", "legendFormat": "Requests/sec"}],
+          "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "green"}, "custom": {"lineWidth": 2, "fillOpacity": 10, "showPoints": "always", "pointSize": 5}}}
+        },
+        {
+          "id": 13,
+          "title": "Ingest Latency p50/p95/p99",
+          "type": "timeseries",
+          "gridPos": {"h": 6, "w": 12, "x": 12, "y": 13},
+          "targets": [
+            {"expr": "histogram_quantile(0.50, rate(online_features_ingest_latency_seconds_bucket[5m]))", "legendFormat": "p50"},
+            {"expr": "histogram_quantile(0.95, rate(online_features_ingest_latency_seconds_bucket[5m]))", "legendFormat": "p95"},
+            {"expr": "histogram_quantile(0.99, rate(online_features_ingest_latency_seconds_bucket[5m]))", "legendFormat": "p99"}
+          ],
+          "fieldConfig": {"defaults": {"custom": {"lineWidth": 2, "fillOpacity": 5, "showPoints": "always", "pointSize": 5}}}
+        }
+      ],
+      "time": {"from": "now-15m", "to": "now"},
+      "refresh": "30s",
+      "schemaVersion": 38,
+      "overwrite": true
+    }
   datanauts-overview.json: |
     {
       "annotations": {
@@ -1652,8 +1786,8 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "(container_memory_working_set_bytes{namespace=\"platform\",pod=~\"mlflow.*|minio.*\",container!=\"\",image!=\"\"}) / on(namespace,pod,container) kube_pod_container_resource_limits{namespace=\"platform\",resource=\"memory\",unit=\"byte\"}",
-              "legendFormat": "{{pod}}",
+              "expr": "(sum(container_memory_working_set_bytes{namespace=\"platform\",pod=~\"mlflow.*|minio.*\",container!=\"\",image!=\"\"}) / sum(kube_pod_container_resource_limits{namespace=\"platform\",pod=~\"mlflow.*|minio.*\",resource=\"memory\",unit=\"byte\"})) or vector(0)",
+              "legendFormat": "platform",
               "range": true,
               "refId": "A"
             }
@@ -1696,8 +1830,8 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "(container_memory_working_set_bytes{namespace=\"monitoring\",pod=~\"grafana.*|prometheus.*\",container!=\"\",image!=\"\"}) / on(namespace,pod,container) kube_pod_container_resource_limits{namespace=\"monitoring\",resource=\"memory\",unit=\"byte\"}",
-              "legendFormat": "{{pod}}",
+              "expr": "(sum(container_memory_working_set_bytes{namespace=\"monitoring\",pod=~\"grafana.*|prometheus.*\",container!=\"\",image!=\"\"}) / sum(kube_pod_container_resource_limits{namespace=\"monitoring\",pod=~\"grafana.*|prometheus.*\",resource=\"memory\",unit=\"byte\"})) or vector(0)",
+              "legendFormat": "monitoring",
               "range": true,
               "refId": "A"
             }

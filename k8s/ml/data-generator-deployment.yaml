@@ -18,7 +18,7 @@ spec:
       containers:
         - name: data-generator
           image: ghcr.io/bhanuu01/datanauts-data-generator:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           env:
             - name: SERVICE_URL
               value: http://online-features:8000

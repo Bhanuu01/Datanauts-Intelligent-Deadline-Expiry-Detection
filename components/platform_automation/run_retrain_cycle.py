@@ -12,41 +12,31 @@ from typing import Any
 from typing import Dict
 from typing import List
 
+from components.common.object_store import download_json
+from components.platform_automation.feedback_curation import compile_feedback_training_additions
 from mlflow.tracking import MlflowClient
-from transformers import AutoModelForSequenceClassification
-from transformers import AutoModelForTokenClassification
-from transformers import AutoTokenizer
+from components.common.object_store import load_json_objects
+from components.common.object_store import object_store_enabled
+from components.common.object_store import upload_directory_as_tarball
+from components.common.object_store import upload_json
 
 
+DEFAULT_RELEASE_ROOT = "/tmp/model-releases"
 DEFAULT_METRICS_PATH = "/tmp/feedback_metrics.json"
 DEFAULT_OUTPUT_PATH = "/tmp/retrain_decision.json"
 DEFAULT_EVAL_PATH = "/tmp/evaluation_metrics.json"
-DEFAULT_RELEASE_ROOT = "/data/model-releases"
-DEFAULT_CANONICAL_ROOT = "/data"
-DEFAULT_BOOTSTRAP_DATASET_ROOT = "/app/components/data/batch_pipeline/output/v20260419_182857"
 DEFAULT_PAPERLESS_URL = "http://paperless-ngx.paperless.svc.cluster.local:8000"
-DEFAULT_FEEDBACK_CHECKPOINT_PATH = "/data/feedback_checkpoint.json"
+DEFAULT_FEEDBACK_CHECKPOINT_PATH = "/tmp/feedback_checkpoint.json"
 DEFAULT_NER_REGISTERED_MODEL = "deadline-ner"
 DEFAULT_CLASSIFIER_REGISTERED_MODEL = "deadline-classifier"
-DEFAULT_NER_LABELS = [
-    "O",
-    "B-EXP_DATE",
-    "I-EXP_DATE",
-    "B-START_DATE",
-    "I-START_DATE",
-    "B-DURATION",
-    "I-DURATION",
-    "B-NOTICE_DATE",
-    "I-NOTICE_DATE",
-]
-DEFAULT_CLASSIFIER_LABELS = {
-    0: "none",
-    1: "expiration",
-    2: "effective",
-    3: "renewal",
-    4: "agreement",
-    5: "notice_period",
-}
+DEFAULT_MODEL_CANDIDATE_PAIRS = ",".join([
+    "bert_ner_v4:roberta_clf_v3",
+    "contracts_bert_ner_v1:deberta_clf_v1",
+    "legal_bert_ner_v1:deberta_clf_v1",
+])
+DEFAULT_RUNTIME_LOG_BUCKET = "datanauts-runtime"
+DEFAULT_MODEL_ARTIFACT_BUCKET = "datanauts-models"
+DEFAULT_CURRENT_PRODUCTION_METRICS_PATH = "/tmp/current_production_metrics.json"
 
 
 def paperless_auth_header() -> str | None:
@@ -89,23 +79,42 @@ def fetch_paperless_tag_count(tag_name: str) -> int:
     return int(document_response.get("count", 0))
 
 
+def maybe_upload_json(path_key_env: str, default_key: str, payload: Dict[str, Any]) -> None:
+    if not object_store_enabled():
+        return
+    upload_json(
+        bucket=os.getenv("RUNTIME_LOG_BUCKET", DEFAULT_RUNTIME_LOG_BUCKET),
+        key=os.getenv(path_key_env, default_key),
+        payload=payload,
+    )
+
+
 def load_feedback_metrics() -> Dict[str, Any]:
     metrics_path = Path(os.getenv("FEEDBACK_METRICS_PATH", DEFAULT_METRICS_PATH))
     if metrics_path.exists():
         return json.loads(metrics_path.read_text())
 
-    feedback_log_path = Path(os.getenv("FEEDBACK_LOG_PATH", "/data/feedback_events.jsonl"))
-    if feedback_log_path.exists():
+    feedback_log_path = Path(os.getenv("FEEDBACK_LOG_PATH", "/tmp/feedback_events.jsonl"))
+    feedback_prefix = os.getenv("FEEDBACK_S3_PREFIX", "runtime/online-features/feedback")
+    all_lines: List[Dict[str, Any]] = []
+    if object_store_enabled():
+        try:
+            all_lines = load_json_objects(
+                os.getenv("RUNTIME_LOG_BUCKET", DEFAULT_RUNTIME_LOG_BUCKET),
+                feedback_prefix,
+            )
+        except Exception:
+            all_lines = []
+    elif feedback_log_path.exists():
         all_lines = [json.loads(line) for line in feedback_log_path.read_text().splitlines() if line.strip()]
 
-        # Only count events accumulated since the last successful retrain so that
-        # repeated runs don't re-trigger on the same already-trained feedback.
+    if all_lines:
         checkpoint_path = Path(os.getenv("FEEDBACK_CHECKPOINT_PATH", DEFAULT_FEEDBACK_CHECKPOINT_PATH))
         last_trained_count = 0
         if checkpoint_path.exists():
             try:
                 checkpoint = json.loads(checkpoint_path.read_text())
-                last_trained_count = int(checkpoint.get("last_trained_line_count", 0))
+                last_trained_count = int(checkpoint.get("last_trained_object_count", checkpoint.get("last_trained_line_count", 0)))
             except (json.JSONDecodeError, KeyError, ValueError):
                 pass
 
@@ -123,7 +132,7 @@ def load_feedback_metrics() -> Dict[str, Any]:
             "wrong_feedback_selections": wrong_feedback_selections,
             "correct_feedback_selections": correct_feedback_selections,
             "_total_feedback_events": len(all_lines),
-            "_last_trained_line_count": last_trained_count,
+            "_last_trained_object_count": last_trained_count,
         }
 
     return {
@@ -174,22 +183,34 @@ def run_command(command: List[str], env: Dict[str, str] | None = None) -> int:
     return process.returncode
 
 
-def replace_directory(source: Path, destination: Path) -> None:
-    if destination.exists():
-        shutil.rmtree(destination)
-    shutil.copytree(source, destination)
+def parse_model_candidate_pairs(default_ner_model: str, default_classifier_model: str) -> List[Dict[str, str]]:
+    raw_pairs = os.getenv("MODEL_CANDIDATE_PAIRS", "").strip()
+    if not raw_pairs:
+        raw_pairs = DEFAULT_MODEL_CANDIDATE_PAIRS or f"{default_ner_model}:{default_classifier_model}"
 
+    pairs: List[Dict[str, str]] = []
+    for idx, item in enumerate(raw_pairs.split(","), start=1):
+        candidate = item.strip()
+        if not candidate:
+            continue
+        if ":" not in candidate:
+            raise ValueError(
+                "MODEL_CANDIDATE_PAIRS entries must use the format 'ner_model:classifier_model'"
+            )
+        ner_model, classifier_model = [part.strip() for part in candidate.split(":", 1)]
+        if not ner_model or not classifier_model:
+            raise ValueError(
+                "MODEL_CANDIDATE_PAIRS entries must include both ner_model and classifier_model"
+            )
+        pairs.append({
+            "label": f"candidate_{idx}_{ner_model}__{classifier_model}",
+            "ner_model": ner_model,
+            "classifier_model": classifier_model,
+        })
 
-def seed_baseline_monitoring_data() -> None:
-    data_root = Path(os.getenv("MODEL_CANONICAL_ROOT", DEFAULT_CANONICAL_ROOT))
-    source_root = Path(os.getenv("BOOTSTRAP_DATASET_ROOT", DEFAULT_BOOTSTRAP_DATASET_ROOT))
-    data_root.mkdir(parents=True, exist_ok=True)
-
-    for file_name in ("train.jsonl", "test.jsonl"):
-        target = data_root / file_name
-        source = source_root / file_name
-        if not target.exists() and source.exists():
-            shutil.copy2(source, target)
+    if not pairs:
+        raise ValueError("No valid model candidate pairs were configured for retraining")
+    return pairs
 
 
 def locate_model_dir(prefix: str, model_name: str) -> Path:
@@ -199,74 +220,20 @@ def locate_model_dir(prefix: str, model_name: str) -> Path:
     return candidate
 
 
-def seed_bootstrap_pretrained_models(ner_model_name: str, classifier_model_name: str) -> None:
-    ner_dir = Path(f"/tmp/deadline-ner-{ner_model_name}")
-    clf_dir = Path(f"/tmp/deadline-clf-{classifier_model_name}")
-    for path in (ner_dir, clf_dir):
-        if path.exists():
-            shutil.rmtree(path)
-        path.mkdir(parents=True, exist_ok=True)
-
-    ner_id2label = {idx: label for idx, label in enumerate(DEFAULT_NER_LABELS)}
-    ner_label2id = {label: idx for idx, label in ner_id2label.items()}
-    ner_base_model = os.getenv("BOOTSTRAP_NER_BASE_MODEL", "dslim/bert-base-NER")
-    ner_tokenizer = AutoTokenizer.from_pretrained(ner_base_model)
-    ner_model = AutoModelForTokenClassification.from_pretrained(
-        ner_base_model,
-        num_labels=len(DEFAULT_NER_LABELS),
-        id2label=ner_id2label,
-        label2id=ner_label2id,
-        ignore_mismatched_sizes=True,
-    )
-    ner_tokenizer.save_pretrained(ner_dir)
-    ner_model.save_pretrained(ner_dir)
-    (ner_dir / "mlflow_run.json").write_text(
-        json.dumps(
-            {
-                "experiment": "bootstrap-pretrained-ner",
-                "run_id": None,
-                "run_name": ner_model_name,
-                "status": "BOOTSTRAP_PRETRAINED_ONLY",
-                "metrics": {},
-            },
-            indent=2,
-        )
-    )
-
-    clf_id2label = DEFAULT_CLASSIFIER_LABELS
-    clf_label2id = {label: idx for idx, label in clf_id2label.items()}
-    clf_base_model = os.getenv("BOOTSTRAP_CLASSIFIER_BASE_MODEL", "roberta-base")
-    clf_tokenizer = AutoTokenizer.from_pretrained(clf_base_model)
-    clf_model = AutoModelForSequenceClassification.from_pretrained(
-        clf_base_model,
-        num_labels=len(clf_id2label),
-        id2label=clf_id2label,
-        label2id=clf_label2id,
-    )
-    clf_tokenizer.save_pretrained(clf_dir)
-    clf_model.save_pretrained(clf_dir)
-    (clf_dir / "mlflow_run.json").write_text(
-        json.dumps(
-            {
-                "experiment": "bootstrap-pretrained-classifier",
-                "run_id": None,
-                "run_name": classifier_model_name,
-                "status": "BOOTSTRAP_PRETRAINED_ONLY",
-                "metrics": {},
-            },
-            indent=2,
-        )
-    )
-
-
-def package_candidate(ner_model_name: str, classifier_model_name: str) -> Dict[str, Any]:
+def package_candidate(
+    ner_model_name: str,
+    classifier_model_name: str,
+    candidate_label: str | None = None,
+) -> Dict[str, Any]:
     release_root = Path(os.getenv("MODEL_RELEASES_ROOT", DEFAULT_RELEASE_ROOT))
     release_root.mkdir(parents=True, exist_ok=True)
 
-    candidate_version = os.getenv(
+    release_label = (candidate_label or f"{ner_model_name}-{classifier_model_name}").replace("/", "-")
+    candidate_version_base = os.getenv(
         "CANDIDATE_VERSION",
-        f"candidate-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+        f"candidate-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
     )
+    candidate_version = f"{candidate_version_base}-{release_label}"
     candidate_root = release_root / candidate_version
     if candidate_root.exists():
         shutil.rmtree(candidate_root)
@@ -279,57 +246,54 @@ def package_candidate(ner_model_name: str, classifier_model_name: str) -> Dict[s
     shutil.copytree(ner_src, ner_dst)
     shutil.copytree(classifier_src, classifier_dst)
 
+    onnx_export_root = candidate_root / "_onnx_export"
+    quantized_clf_dst = candidate_root / "onnx_quantized_clf"
+    quantized_ner_dst = candidate_root / "onnx_quantized_ner"
+    quantize_env = os.environ.copy()
+    quantize_env.update(
+        {
+            "ONNX_WORKDIR": str(onnx_export_root),
+            "HF_CLF_SOURCE_PATH": str(classifier_dst),
+            "HF_NER_SOURCE_PATH": str(ner_dst),
+            "ONNX_CLF_EXPORT_PATH": str(onnx_export_root / "onnx_model_clf"),
+            "ONNX_NER_EXPORT_PATH": str(onnx_export_root / "onnx_model_ner"),
+            "ONNX_CLF_QUANTIZED_PATH": str(quantized_clf_dst),
+            "ONNX_NER_QUANTIZED_PATH": str(quantized_ner_dst),
+        }
+    )
+    serving_root = Path(os.getenv("SERVING_ROOT", "/app/components/serving"))
+    quantize_command = ["python", str(serving_root / "quantize_onnx.py")]
+    if run_command(quantize_command, env=quantize_env) != 0:
+        raise RuntimeError("ONNX export/quantization failed for candidate package")
+    shutil.rmtree(onnx_export_root, ignore_errors=True)
+
     package_manifest = {
         "candidate_version": candidate_version,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "candidate_root": str(candidate_root),
+        "candidate_label": release_label,
         "ner_model_name": ner_model_name,
         "classifier_model_name": classifier_model_name,
         "ner_path": str(ner_dst),
         "classifier_path": str(classifier_dst),
+        "onnx_classifier_path": str(quantized_clf_dst),
+        "onnx_ner_path": str(quantized_ner_dst),
     }
+    if object_store_enabled():
+        bundle_key = f"releases/{candidate_version}/bundle.tar.gz"
+        upload_directory_as_tarball(
+            bucket=os.getenv("MODEL_ARTIFACT_BUCKET", DEFAULT_MODEL_ARTIFACT_BUCKET),
+            key=bundle_key,
+            source_dir=candidate_root,
+            tmp_dir="/tmp",
+        )
+        package_manifest["bundle_s3_key"] = bundle_key
+        upload_json(
+            bucket=os.getenv("MODEL_ARTIFACT_BUCKET", DEFAULT_MODEL_ARTIFACT_BUCKET),
+            key=f"releases/{candidate_version}/manifest.json",
+            payload=package_manifest,
+        )
     (candidate_root / "package_manifest.json").write_text(json.dumps(package_manifest, indent=2))
     return package_manifest
-
-
-def build_quantized_candidate(package_manifest: Dict[str, Any]) -> Dict[str, str]:
-    candidate_root = Path(package_manifest["candidate_root"])
-    quantized_root = candidate_root / "onnx_quantized_model"
-    quantized_root.mkdir(parents=True, exist_ok=True)
-
-    quantize_env = os.environ.copy()
-    quantize_env["HF_CLF_SOURCE_PATH"] = package_manifest["classifier_path"]
-    quantize_env["HF_NER_SOURCE_PATH"] = package_manifest["ner_path"]
-    quantize_env["ONNX_WORKDIR"] = str(quantized_root)
-
-    quantize_script = Path("/app/components/serving/quantize_onnx.py")
-    exit_code = run_command([sys.executable, str(quantize_script)], env=quantize_env)
-    if exit_code != 0:
-        raise RuntimeError("ONNX export/quantization failed")
-
-    quantized_paths = {
-        "root": str(quantized_root),
-        "classifier": str(quantized_root / "onnx_quantized_clf"),
-        "ner": str(quantized_root / "onnx_quantized_ner"),
-    }
-    package_manifest["quantized_paths"] = quantized_paths
-    (candidate_root / "package_manifest.json").write_text(json.dumps(package_manifest, indent=2))
-    return quantized_paths
-
-
-def publish_canonical_models(package_manifest: Dict[str, Any]) -> None:
-    canonical_root = Path(os.getenv("MODEL_CANONICAL_ROOT", DEFAULT_CANONICAL_ROOT))
-    canonical_root.mkdir(parents=True, exist_ok=True)
-
-    replace_directory(Path(package_manifest["ner_path"]), canonical_root / "ner")
-    replace_directory(Path(package_manifest["classifier_path"]), canonical_root / "classifier")
-
-    quantized_paths = package_manifest.get("quantized_paths", {})
-    if quantized_paths:
-        onnx_root = canonical_root / "onnx_quantized_model"
-        onnx_root.mkdir(parents=True, exist_ok=True)
-        replace_directory(Path(quantized_paths["classifier"]), onnx_root / "onnx_quantized_clf")
-        replace_directory(Path(quantized_paths["ner"]), onnx_root / "onnx_quantized_ner")
 
 
 def load_model_run_metadata(model_dir: str) -> Dict[str, Any] | None:
@@ -411,12 +375,46 @@ def selected_experiment_metrics(
         run_metrics = fetch_run_metrics(client, str(metadata["run_id"]))
         if run_metrics["status"] == "FINISHED":
             return run_metrics
-
-    return best_successful_experiment_metrics(
-        tracking_uri=tracking_uri,
-        experiment_name=experiment_name,
-        preferred_model_name=preferred_model_name,
+        raise RuntimeError(f"MLflow run {metadata['run_id']} for {model_dir} did not finish successfully")
+    raise RuntimeError(
+        f"Strict MLflow attribution failed for {model_dir}; missing usable mlflow_run.json metadata"
     )
+
+
+def load_current_production_metrics() -> Dict[str, Any]:
+    path = Path(os.getenv("CURRENT_PRODUCTION_METRICS_PATH", DEFAULT_CURRENT_PRODUCTION_METRICS_PATH))
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except json.JSONDecodeError:
+            return {}
+    if object_store_enabled():
+        try:
+            return download_json(
+                os.getenv("RUNTIME_LOG_BUCKET", DEFAULT_RUNTIME_LOG_BUCKET),
+                os.getenv("CURRENT_PRODUCTION_METRICS_S3_KEY", "automation/current_production_metrics.json"),
+            )
+        except Exception:
+            return {}
+    return {}
+
+
+def load_feedback_checkpoint() -> Dict[str, Any]:
+    checkpoint_path = Path(os.getenv("FEEDBACK_CHECKPOINT_PATH", DEFAULT_FEEDBACK_CHECKPOINT_PATH))
+    if checkpoint_path.exists():
+        try:
+            return json.loads(checkpoint_path.read_text())
+        except json.JSONDecodeError:
+            return {}
+    if object_store_enabled():
+        try:
+            return download_json(
+                os.getenv("RUNTIME_LOG_BUCKET", DEFAULT_RUNTIME_LOG_BUCKET),
+                os.getenv("FEEDBACK_CHECKPOINT_S3_KEY", "automation/feedback_checkpoint.json"),
+            )
+        except Exception:
+            return {}
+    return {}
 
 
 def ensure_registered_model(client: MlflowClient, model_name: str) -> None:
@@ -459,6 +457,10 @@ def register_candidate_models(
         client.set_model_version_tag(model_name, version.version, "candidate_version", candidate_version)
         client.set_model_version_tag(model_name, version.version, "release_channel", "candidate")
         client.set_model_version_tag(model_name, version.version, "component", component)
+        try:
+            client.set_registered_model_alias(model_name, "candidate", version.version)
+        except Exception:
+            pass
         registered_versions[component] = {
             "registered_model": model_name,
             "version": version.version,
@@ -517,11 +519,13 @@ def build_evaluation_metrics(package_manifest: Dict[str, Any]) -> Dict[str, Any]
     evaluation_metrics.update(
         {
             "candidate_version": package_manifest["candidate_version"],
+            "candidate_bundle_s3_key": package_manifest.get("bundle_s3_key"),
             "candidate_paths": {
                 "ner": package_manifest["ner_path"],
                 "classifier": package_manifest["classifier_path"],
+                "onnx_classifier": package_manifest["onnx_classifier_path"],
+                "onnx_ner": package_manifest["onnx_ner_path"],
             },
-            "candidate_quantized_paths": package_manifest.get("quantized_paths", {}),
             "ner_f1": float(ner_metrics["metrics"].get("test_f1", 0.0)),
             "clf_macro_f1": float(clf_metrics["metrics"].get("test_f1", 0.0)),
             "mlflow_runs": {
@@ -530,18 +534,127 @@ def build_evaluation_metrics(package_manifest: Dict[str, Any]) -> Dict[str, Any]
             },
         }
     )
-    evaluation_metrics["model_registry"] = register_candidate_models(
-        tracking_uri=tracking_uri,
-        candidate_version=package_manifest["candidate_version"],
-        ner_run_id=ner_metrics["run_id"],
-        classifier_run_id=clf_metrics["run_id"],
-    )
     evaluation_path.write_text(json.dumps(evaluation_metrics, indent=2))
+    maybe_upload_json("EVALUATION_METRICS_S3_KEY", "automation/evaluation_metrics.json", evaluation_metrics)
     return evaluation_metrics
 
 
+def score_candidate(evaluation_metrics: Dict[str, Any]) -> float:
+    total_contracts = max(int(evaluation_metrics.get("total_test_contracts", 0)), 1)
+    false_alarm_rate = float(evaluation_metrics.get("false_alarm_count", 0)) / total_contracts
+    coverage = float(evaluation_metrics.get("e2e_coverage", 0.0))
+    exact_match = float(evaluation_metrics.get("exact_match_pct", 0.0)) / 100.0
+    within_30 = float(evaluation_metrics.get("within_30_days_pct", 0.0)) / 100.0
+    ner_f1 = float(evaluation_metrics.get("ner_f1", 0.0))
+    clf_macro_f1 = float(evaluation_metrics.get("clf_macro_f1", 0.0))
+    cross_domain_accuracy = float(evaluation_metrics.get("cross_domain_accuracy", 0.0))
+
+    score = (
+        (0.35 * coverage)
+        + (0.15 * exact_match)
+        + (0.10 * within_30)
+        + (0.15 * ner_f1)
+        + (0.15 * clf_macro_f1)
+        + (0.10 * cross_domain_accuracy)
+        - (0.10 * false_alarm_rate)
+    )
+    return round(score, 6)
+
+
+def build_champion_comparison(
+    evaluation_metrics: Dict[str, Any],
+    champion_metrics: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not champion_metrics:
+        return {"available": False}
+    candidate_score = score_candidate(evaluation_metrics)
+    champion_score = float(champion_metrics.get("candidate_score", champion_metrics.get("score", 0.0)))
+    return {
+        "available": True,
+        "candidate_score": candidate_score,
+        "champion_score": champion_score,
+        "score_delta": round(candidate_score - champion_score, 6),
+        "ner_f1_delta": round(
+            float(evaluation_metrics.get("ner_f1", 0.0)) - float(champion_metrics.get("ner_f1", 0.0)),
+            6,
+        ),
+        "clf_macro_f1_delta": round(
+            float(evaluation_metrics.get("clf_macro_f1", 0.0)) - float(champion_metrics.get("clf_macro_f1", 0.0)),
+            6,
+        ),
+        "coverage_delta": round(
+            float(evaluation_metrics.get("e2e_coverage", 0.0)) - float(champion_metrics.get("e2e_coverage", 0.0)),
+            6,
+        ),
+        "exact_match_delta": round(
+            float(evaluation_metrics.get("exact_match_pct", 0.0)) - float(champion_metrics.get("exact_match_pct", 0.0)),
+            6,
+        ),
+        "within_30_days_delta": round(
+            float(evaluation_metrics.get("within_30_days_pct", 0.0)) - float(champion_metrics.get("within_30_days_pct", 0.0)),
+            6,
+        ),
+    }
+
+
+def training_quality_gate(
+    evaluation_metrics: Dict[str, Any],
+    champion_metrics: Dict[str, Any],
+) -> Dict[str, Any]:
+    min_ner_f1 = float(os.getenv("MIN_NER_F1", "0.65"))
+    min_clf_macro_f1 = float(os.getenv("MIN_CLF_MACRO_F1", "0.65"))
+    min_e2e_coverage = float(os.getenv("MIN_E2E_COVERAGE", "0.60"))
+    max_false_alarm_count = int(os.getenv("MAX_FALSE_ALARM_COUNT", "10"))
+    min_candidate_score = float(os.getenv("MIN_CANDIDATE_SCORE", "0.45"))
+    max_score_regression = float(os.getenv("MAX_SCORE_REGRESSION", "0.01"))
+    max_ner_f1_regression = float(os.getenv("MAX_NER_F1_REGRESSION", "0.02"))
+    max_clf_f1_regression = float(os.getenv("MAX_CLF_F1_REGRESSION", "0.02"))
+    max_coverage_regression = float(os.getenv("MAX_E2E_COVERAGE_REGRESSION", "0.02"))
+
+    failures: List[str] = []
+    candidate_score = score_candidate(evaluation_metrics)
+    if float(evaluation_metrics.get("ner_f1", 0.0)) < min_ner_f1:
+        failures.append("ner_f1_below_threshold")
+    if float(evaluation_metrics.get("clf_macro_f1", 0.0)) < min_clf_macro_f1:
+        failures.append("clf_macro_f1_below_threshold")
+    if float(evaluation_metrics.get("e2e_coverage", 0.0)) < min_e2e_coverage:
+        failures.append("e2e_coverage_below_threshold")
+    if int(evaluation_metrics.get("false_alarm_count", 999999)) > max_false_alarm_count:
+        failures.append("false_alarm_count_above_threshold")
+    if candidate_score < min_candidate_score:
+        failures.append("candidate_score_below_threshold")
+
+    comparison = build_champion_comparison(evaluation_metrics, champion_metrics)
+    if comparison.get("available"):
+        if comparison["score_delta"] < -max_score_regression:
+            failures.append("candidate_score_regresses_vs_production")
+        if comparison["ner_f1_delta"] < -max_ner_f1_regression:
+            failures.append("ner_f1_regresses_vs_production")
+        if comparison["clf_macro_f1_delta"] < -max_clf_f1_regression:
+            failures.append("clf_macro_f1_regresses_vs_production")
+        if comparison["coverage_delta"] < -max_coverage_regression:
+            failures.append("e2e_coverage_regresses_vs_production")
+
+    return {
+        "eligible": not failures,
+        "candidate_score": candidate_score,
+        "failed_gates": failures,
+        "comparison_to_current_production": comparison,
+        "thresholds": {
+            "min_ner_f1": min_ner_f1,
+            "min_clf_macro_f1": min_clf_macro_f1,
+            "min_e2e_coverage": min_e2e_coverage,
+            "max_false_alarm_count": max_false_alarm_count,
+            "min_candidate_score": min_candidate_score,
+            "max_score_regression": max_score_regression,
+            "max_ner_f1_regression": max_ner_f1_regression,
+            "max_clf_f1_regression": max_clf_f1_regression,
+            "max_coverage_regression": max_coverage_regression,
+        },
+    }
+
+
 def orchestrate_training() -> Dict[str, Any]:
-    seed_baseline_monitoring_data()
     training_root = Path(os.getenv("TRAINING_ROOT", "/app/components/training"))
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.platform.svc.cluster.local:5000")
     training_data_path = Path(os.getenv("TRAINING_DATA_PATH", "/app/data/deadline_sentences"))
@@ -551,15 +664,13 @@ def orchestrate_training() -> Dict[str, Any]:
         "MLFLOW_S3_ENDPOINT_URL", "http://minio.platform.svc.cluster.local:9000"
     )
 
+    default_ner_model = os.getenv("NER_MODEL_NAME", "bert_ner_v4")
+    default_classifier_model = os.getenv("CLASSIFIER_MODEL_NAME", "roberta_clf_v3")
+    candidate_pairs = parse_model_candidate_pairs(default_ner_model, default_classifier_model)
     config = {
-        "ner_model": os.getenv("NER_MODEL_NAME", "bert_ner_v4"),
-        "classifier_model": os.getenv("CLASSIFIER_MODEL_NAME", "roberta_clf_v3"),
-    }
-
-    bootstrap_pretrained_only = os.getenv("BOOTSTRAP_PRETRAINED_ONLY", "false").lower() in {
-        "1",
-        "true",
-        "yes",
+        "default_ner_model": default_ner_model,
+        "default_classifier_model": default_classifier_model,
+        "candidate_pairs": candidate_pairs,
     }
 
     commands: List[List[str]] = []
@@ -573,62 +684,177 @@ def orchestrate_training() -> Dict[str, Any]:
             ]
         )
 
-    if bootstrap_pretrained_only:
-        seed_bootstrap_pretrained_models(config["ner_model"], config["classifier_model"])
-        results = [{"command": ["bootstrap_pretrained_only"], "exit_code": 0}]
-    else:
-        commands.extend([
-            ["python", str(training_root / "src" / "train_ner.py"), "--model", config["ner_model"]],
-            ["python", str(training_root / "src" / "train_classifier.py"), "--model", config["classifier_model"]],
-        ])
+    results = []
+    for command in commands:
+        exit_code = run_command(command, env=shared_env)
+        results.append({"command": command, "exit_code": exit_code})
+        if exit_code != 0:
+            return {"ok": False, "steps": results, "config": config}
 
-        results = []
-        for command in commands:
-            exit_code = run_command(command, env=shared_env)
-            results.append({"command": command, "exit_code": exit_code})
-            if exit_code != 0:
-                return {"ok": False, "steps": results, "config": config}
-
-    package_manifest = package_candidate(config["ner_model"], config["classifier_model"])
-    build_quantized_candidate(package_manifest)
-    if os.getenv("PUBLISH_CANONICAL_MODEL", "false").lower() in {"1", "true", "yes"}:
-        publish_canonical_models(package_manifest)
-    evaluation_metrics = (
-        {"bootstrap_mode": "pretrained_only"}
-        if bootstrap_pretrained_only
-        else build_evaluation_metrics(package_manifest)
+    feedback_checkpoint = load_feedback_checkpoint()
+    feedback_curation_dir = Path(os.getenv("FEEDBACK_CURATION_DIR", "/tmp/feedback-curation"))
+    feedback_curation_summary = compile_feedback_training_additions(
+        output_dir=str(feedback_curation_dir),
+        checkpoint=feedback_checkpoint,
     )
+    champion_metrics = load_current_production_metrics()
+    evaluated_candidates: List[Dict[str, Any]] = []
+    for candidate in candidate_pairs:
+        candidate_steps: List[Dict[str, Any]] = []
+        candidate_env = shared_env.copy()
+        candidate_env["FEEDBACK_CLASSIFIER_ADDITIONS_PATH"] = feedback_curation_summary["classifier_additions_path"]
+        candidate_env["FEEDBACK_NER_ADDITIONS_PATH"] = feedback_curation_summary["ner_additions_path"]
+
+        if os.getenv("ENABLE_RAY_TUNE_FOR_RETRAIN", "false").lower() in {"1", "true", "yes"}:
+            tuning_dir = Path(os.getenv("RAY_TUNE_CONFIG_DIR", "/tmp/ray-tune-configs"))
+            tuning_dir.mkdir(parents=True, exist_ok=True)
+            ner_tune_path = tuning_dir / f"{candidate['label']}_ner.json"
+            clf_tune_path = tuning_dir / f"{candidate['label']}_clf.json"
+            ner_tune_env = candidate_env.copy()
+            clf_tune_env = candidate_env.copy()
+            ner_tune_env["BEST_CONFIG_OUT"] = str(ner_tune_path)
+            clf_tune_env["BEST_CONFIG_OUT"] = str(clf_tune_path)
+            if run_command(["python", str(training_root / "src" / "train_ner_ray_tune.py")], env=ner_tune_env) != 0:
+                return {"ok": False, "steps": results, "config": config, "error": "NER Ray Tune failed"}
+            if run_command(["python", str(training_root / "src" / "train_classifier_ray_tune.py")], env=clf_tune_env) != 0:
+                return {"ok": False, "steps": results, "config": config, "error": "Classifier Ray Tune failed"}
+            ner_best = json.loads(ner_tune_path.read_text()) if ner_tune_path.exists() else {}
+            clf_best = json.loads(clf_tune_path.read_text()) if clf_tune_path.exists() else {}
+            candidate["ner_config_json"] = json.dumps(ner_best.get("config", {}))
+            candidate["classifier_config_json"] = json.dumps(clf_best.get("config", {}))
+
+        train_commands = [
+            [
+                "python", str(training_root / "src" / "train_ner.py"),
+                "--model", candidate["ner_model"],
+                "--config_json", candidate.get("ner_config_json", ""),
+            ],
+            [
+                "python", str(training_root / "src" / "train_classifier.py"),
+                "--model", candidate["classifier_model"],
+                "--config_json", candidate.get("classifier_config_json", ""),
+            ],
+        ]
+
+        candidate_failed = False
+        for command in train_commands:
+            exit_code = run_command(command, env=candidate_env)
+            step_result = {
+                "command": command,
+                "exit_code": exit_code,
+                "candidate_label": candidate["label"],
+            }
+            candidate_steps.append(step_result)
+            results.append(step_result)
+            if exit_code != 0:
+                candidate_failed = True
+                break
+
+        if candidate_failed:
+            evaluated_candidates.append({
+                **candidate,
+                "ok": False,
+                "steps": candidate_steps,
+            })
+            continue
+
+        try:
+            package_manifest = package_candidate(
+                candidate["ner_model"],
+                candidate["classifier_model"],
+                candidate["label"],
+            )
+            evaluation_metrics = build_evaluation_metrics(package_manifest)
+            quality_gate = training_quality_gate(evaluation_metrics, champion_metrics)
+            evaluation_metrics["candidate_score"] = quality_gate["candidate_score"]
+            evaluation_metrics["registration_eligible"] = quality_gate["eligible"]
+            evaluation_metrics["training_quality_gate"] = quality_gate
+            if quality_gate["eligible"]:
+                evaluation_metrics["model_registry"] = register_candidate_models(
+                    tracking_uri=tracking_uri,
+                    candidate_version=package_manifest["candidate_version"],
+                    ner_run_id=evaluation_metrics["mlflow_runs"]["ner"],
+                    classifier_run_id=evaluation_metrics["mlflow_runs"]["classifier"],
+                )
+            else:
+                evaluation_metrics["model_registry"] = {}
+            evaluation_path = Path(os.getenv("EVALUATION_METRICS_PATH", DEFAULT_EVAL_PATH))
+            evaluation_path.write_text(json.dumps(evaluation_metrics, indent=2))
+            maybe_upload_json("EVALUATION_METRICS_S3_KEY", "automation/evaluation_metrics.json", evaluation_metrics)
+            candidate_score = score_candidate(evaluation_metrics)
+            evaluated_candidates.append({
+                **candidate,
+                "ok": True,
+                "steps": candidate_steps,
+                "package_manifest": package_manifest,
+                "evaluation_metrics": evaluation_metrics,
+                "score": candidate_score,
+            })
+        except Exception as exc:
+            evaluated_candidates.append({
+                **candidate,
+                "ok": False,
+                "steps": candidate_steps,
+                "error": str(exc),
+            })
+
+    successful_candidates = [candidate for candidate in evaluated_candidates if candidate.get("ok")]
+    eligible_candidates = [
+        candidate
+        for candidate in successful_candidates
+        if candidate.get("evaluation_metrics", {}).get("registration_eligible")
+    ]
+    if not successful_candidates:
+        return {
+            "ok": False,
+            "steps": results,
+            "config": config,
+            "feedback_curation": feedback_curation_summary,
+            "evaluated_candidates": evaluated_candidates,
+        }
+    if not eligible_candidates:
+        return {
+            "ok": False,
+            "steps": results,
+            "config": config,
+            "feedback_curation": feedback_curation_summary,
+            "evaluated_candidates": evaluated_candidates,
+            "error": "no_candidates_passed_training_quality_gate",
+        }
+
+    best_candidate = max(eligible_candidates, key=lambda candidate: candidate.get("score", float("-inf")))
     return {
         "ok": True,
         "steps": results,
         "config": config,
-        "package_manifest": package_manifest,
-        "evaluation_metrics": evaluation_metrics,
+        "feedback_curation": feedback_curation_summary,
+        "evaluated_candidates": evaluated_candidates,
+        "selected_candidate": {
+            "label": best_candidate["label"],
+            "ner_model": best_candidate["ner_model"],
+            "classifier_model": best_candidate["classifier_model"],
+            "score": best_candidate["score"],
+        },
+        "package_manifest": best_candidate["package_manifest"],
+        "evaluation_metrics": best_candidate["evaluation_metrics"],
     }
 
 
 def main() -> int:
-    seed_baseline_monitoring_data()
-    if os.getenv("FORCE_RETRAIN", "false").lower() in {"1", "true", "yes"}:
-        decision = {
-            "trigger_retrain": True,
-            "reasons": ["force_retrain"],
-            "metrics": load_feedback_metrics(),
-            "thresholds": {},
-        }
-    else:
-        decision = should_retrain(load_feedback_metrics())
+    decision = should_retrain(load_feedback_metrics())
     output_path = Path(os.getenv("RETRAIN_DECISION_PATH", DEFAULT_OUTPUT_PATH))
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if os.getenv("DRY_RUN", "false").lower() == "true":
         output_path.write_text(json.dumps(decision, indent=2))
+        maybe_upload_json("RETRAIN_DECISION_S3_KEY", "automation/retrain_decision.json", decision)
         print(json.dumps(decision, indent=2))
         return 0
 
     if not decision["trigger_retrain"]:
         decision["status"] = "skipped"
         output_path.write_text(json.dumps(decision, indent=2))
+        maybe_upload_json("RETRAIN_DECISION_S3_KEY", "automation/retrain_decision.json", decision)
         print(json.dumps(decision, indent=2))
         return 0
 
@@ -640,21 +866,48 @@ def main() -> int:
         decision["candidate_paths"] = {
             "ner": training_result["package_manifest"]["ner_path"],
             "classifier": training_result["package_manifest"]["classifier_path"],
+            "onnx_classifier": training_result["package_manifest"]["onnx_classifier_path"],
+            "onnx_ner": training_result["package_manifest"]["onnx_ner_path"],
         }
+        if training_result["package_manifest"].get("bundle_s3_key"):
+            decision["candidate_bundle_s3_key"] = training_result["package_manifest"]["bundle_s3_key"]
 
     if training_result["ok"]:
         # Advance the checkpoint so the next scheduled run only counts new events.
-        feedback_log_path = Path(os.getenv("FEEDBACK_LOG_PATH", "/data/feedback_events.jsonl"))
+        feedback_log_path = Path(os.getenv("FEEDBACK_LOG_PATH", "/tmp/feedback_events.jsonl"))
         checkpoint_path = Path(os.getenv("FEEDBACK_CHECKPOINT_PATH", DEFAULT_FEEDBACK_CHECKPOINT_PATH))
-        if feedback_log_path.exists():
+        total_lines = 0
+        if object_store_enabled():
+            total_lines = len(
+                load_json_objects(
+                    os.getenv("RUNTIME_LOG_BUCKET", DEFAULT_RUNTIME_LOG_BUCKET),
+                    os.getenv("FEEDBACK_S3_PREFIX", "runtime/online-features/feedback"),
+                )
+            )
+        elif feedback_log_path.exists():
             total_lines = sum(1 for line in feedback_log_path.read_text().splitlines() if line.strip())
-            checkpoint_path.write_text(json.dumps({
-                "last_trained_line_count": total_lines,
+        if total_lines:
+            latest_feedback_timestamp = (
+                training_result
+                .get("feedback_curation", {})
+                .get("latest_new_feedback_timestamp")
+                or training_result.get("feedback_curation", {}).get("latest_used_feedback_timestamp")
+                or datetime.now(timezone.utc).isoformat()
+            )
+            checkpoint_payload = {
+                "last_trained_object_count": total_lines,
                 "last_trained_at": datetime.now(timezone.utc).isoformat(),
+                "last_trained_feedback_timestamp": latest_feedback_timestamp,
                 "candidate_version": decision.get("candidate_version"),
+            }
+            checkpoint_path.write_text(json.dumps({
+                **checkpoint_payload,
+                "last_trained_line_count": total_lines,
             }, indent=2))
+            maybe_upload_json("FEEDBACK_CHECKPOINT_S3_KEY", "automation/feedback_checkpoint.json", checkpoint_payload)
 
     output_path.write_text(json.dumps(decision, indent=2))
+    maybe_upload_json("RETRAIN_DECISION_S3_KEY", "automation/retrain_decision.json", decision)
     print(json.dumps(decision, indent=2))
     return 0 if training_result["ok"] else 1
 

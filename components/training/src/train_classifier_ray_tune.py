@@ -1,4 +1,4 @@
-import os, time, random
+import json, os, time, random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -25,9 +25,23 @@ os.environ["GIT_PYTHON_REFRESH"]     = "quiet"
 
 MLFLOW_URI  = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.platform.svc.cluster.local:5000")
 EXPERIMENT  = "deadline-detection-classifier-ray-tune"
-BASE_MODEL  = "roberta-base"
 DATA_PATH   = "/app/data/deadline_sentences"
 NUM_LABELS  = 6
+
+CLASSIFIER_MODEL_CANDIDATES = {
+    "roberta_base": {
+        "base_model": "roberta-base",
+        "batch_sizes": [8, 16, 32],
+    },
+    "deberta_v3_base": {
+        "base_model": "microsoft/deberta-v3-base",
+        "batch_sizes": [4, 8, 16],
+    },
+    "deberta_v3_large": {
+        "base_model": "microsoft/deberta-v3-large",
+        "batch_sizes": [4, 8],
+    },
+}
 
 CLF_LABEL2ID = {"none": 0, "expiration": 1, "effective": 2, "renewal": 3, "agreement": 4, "notice_period": 5}
 CLF_ID2LABEL = {v: k for k, v in CLF_LABEL2ID.items()}
@@ -84,15 +98,24 @@ def compute_clf_metrics(p):
 
 
 def train_trial(config):
+    model_key        = config["model_key"]
+    model_cfg        = CLASSIFIER_MODEL_CANDIDATES[model_key]
+    base_model       = model_cfg["base_model"]
     lr              = config["learning_rate"]
-    batch_size      = config["batch_size"]
+    requested_batch = config["batch_size"]
+    batch_size      = requested_batch
+    if batch_size not in model_cfg["batch_sizes"]:
+        eligible = [size for size in model_cfg["batch_sizes"] if size <= requested_batch]
+        batch_size = max(eligible) if eligible else min(model_cfg["batch_sizes"])
     warmup_ratio    = config["warmup_ratio"]
     weight_decay    = config["weight_decay"]
     epochs          = config["epochs"]
     none_ratio      = config["none_ratio"]
     max_seq_length  = config["max_seq_length"]
     label_smoothing = config["label_smoothing"]
-    run_name        = f"clf_lr{lr:.1e}_bs{batch_size}_wd{weight_decay:.0e}_ep{epochs}"
+    run_name        = (
+        f"{model_key}_clf_lr{lr:.1e}_bs{batch_size}_wd{weight_decay:.0e}_ep{epochs}"
+    )
 
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT)
@@ -106,7 +129,10 @@ def train_trial(config):
             "none_ratio":      none_ratio,
             "max_seq_length":  max_seq_length,
             "label_smoothing": label_smoothing,
-            "base_model":      BASE_MODEL,
+            "model_key":       model_key,
+            "base_model":      base_model,
+            "requested_batch_size": requested_batch,
+            "effective_batch_size": batch_size,
             "search_method":   "Ray Tune ASHA",
             "num_labels":      NUM_LABELS,
             "label_schema":    "none|expiration|effective|renewal|agreement|notice_period",
@@ -119,7 +145,7 @@ def train_trial(config):
         test_ds   = dd["test"]
         class_weights = compute_class_weights(train_ds)
 
-        tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+        tokenizer = AutoTokenizer.from_pretrained(base_model)
 
         def tokenize(examples):
             return tokenizer(examples["sentence"], truncation=True,
@@ -135,7 +161,7 @@ def train_trial(config):
             ds.set_format("torch")
 
         model = AutoModelForSequenceClassification.from_pretrained(
-            BASE_MODEL, num_labels=NUM_LABELS,
+            base_model, num_labels=NUM_LABELS,
             id2label=CLF_ID2LABEL, label2id=CLF_LABEL2ID,
         )
 
@@ -197,8 +223,9 @@ def train_trial(config):
 def main():
     ray.init(ignore_reinit_error=True)
     search_space = {
+        "model_key":        tune.choice(list(CLASSIFIER_MODEL_CANDIDATES.keys())),
         "learning_rate":   tune.loguniform(1e-5, 1e-4),
-        "batch_size":      tune.choice([8, 16, 32]),
+        "batch_size":      tune.choice([4, 8, 16, 32]),
         "warmup_ratio":    tune.uniform(0.05, 0.20),
         "weight_decay":    tune.loguniform(1e-3, 0.1),
         "epochs":          tune.choice([3, 5, 7]),
@@ -219,11 +246,13 @@ def main():
             storage_path="/tmp/ray_results",
         ),
     )
-    print("\n=== Ray Tune ASHA: 8 trials on RoBERTa Classifier (4-class), 2 concurrent ===\n")
+    print("\n=== Ray Tune ASHA: classifier backbone search with RoBERTa + DeBERTa candidates ===\n")
     results = tuner.fit()
     best    = results.get_best_result(metric="f1", mode="max")
     print(f"\n=== BEST TRIAL ===")
     print(f"  macro F1:      {best.metrics['f1']:.4f}")
+    print(f"  model_key:     {best.config['model_key']}")
+    print(f"  base_model:    {CLASSIFIER_MODEL_CANDIDATES[best.config['model_key']]['base_model']}")
     print(f"  learning_rate: {best.config['learning_rate']:.2e}")
     print(f"  batch_size:    {best.config['batch_size']}")
     print(f"  warmup_ratio:  {best.config['warmup_ratio']:.3f}")
@@ -231,11 +260,28 @@ def main():
     print(f"  none_ratio:    {best.config['none_ratio']}")
     print(f"  max_seq_length:{best.config['max_seq_length']}")
     print(f"  weight_decay:  {best.config['weight_decay']:.2e}")
+    best_config_out = os.getenv("BEST_CONFIG_OUT", "").strip()
+    if best_config_out:
+        payload = {
+            "model_key": best.config["model_key"],
+            "base_model": CLASSIFIER_MODEL_CANDIDATES[best.config["model_key"]]["base_model"],
+            "f1": best.metrics["f1"],
+            "config": best.config,
+        }
+        with open(best_config_out, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
     print(f"  label_smoothing:{best.config['label_smoothing']}")
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT)
     with mlflow.start_run(run_name="RAY_TUNE_CLF_BEST_SUMMARY"):
-        mlflow.log_params({**best.config, "search_method": "Ray Tune ASHA", "total_trials": len(results)})
+        mlflow.log_params(
+            {
+                **best.config,
+                "base_model": CLASSIFIER_MODEL_CANDIDATES[best.config["model_key"]]["base_model"],
+                "search_method": "Ray Tune ASHA",
+                "total_trials": len(results),
+            }
+        )
         mlflow.log_metrics({"best_f1": best.metrics["f1"]})
     print(f"\nAll trials → {MLFLOW_URI} | Experiment: {EXPERIMENT}\n")
     ray.shutdown()

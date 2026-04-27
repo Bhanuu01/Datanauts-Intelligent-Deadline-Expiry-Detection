@@ -28,7 +28,7 @@ detect_public_host() {
 if [[ -z "${PUBLIC_HOST}" ]]; then
   PUBLIC_HOST="$(detect_public_host)" || {
     echo "Unable to detect a public IP automatically." >&2
-    echo "Pass it explicitly: bash scripts/sync-public-endpoints.sh 129.114.x.x" >&2
+    echo "Pass it explicitly: bash scripts/sync-public-endpoints.sh <public-host>" >&2
     exit 1
   }
 fi

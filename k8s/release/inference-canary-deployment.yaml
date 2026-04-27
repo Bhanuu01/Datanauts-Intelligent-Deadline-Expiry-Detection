@@ -21,25 +21,10 @@ spec:
     spec:
       nodeSelector:
         datanauts.io/durable-node: "true"
-      initContainers:
-        - name: wait-for-onnx-models
-          image: busybox:1.36
-          command:
-            - sh
-            - -c
-            - >
-              until [ -d /models/onnx_quantized_model/onnx_quantized_clf ] &&
-              [ -d /models/onnx_quantized_model/onnx_quantized_ner ]; do
-                echo "Waiting for ONNX model artifacts...";
-                sleep 10;
-              done
-          volumeMounts:
-            - name: model-storage
-              mountPath: /models
       containers:
         - name: deadline-onnx-serving-canary
           image: ghcr.io/bhanuu01/datanauts-onnx-serving:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8004
           env:
@@ -56,9 +41,28 @@ spec:
             - name: ONNX_MAX_SENTENCE_CHARS
               value: "512"
             - name: FEEDBACK_LOG_PATH
-              value: /models/serving_feedback_canary.jsonl
+              value: /tmp/serving_feedback_canary.jsonl
             - name: RELEASE_CHANNEL
               value: canary
+            - name: OBJECT_STORE_ENDPOINT_URL
+              value: http://minio.platform.svc.cluster.local:9000
+            - name: MODEL_BUNDLE_S3_KEY
+              value: releases/bootstrap/bundle.tar.gz
+            - name: MODEL_ARTIFACT_BUCKET
+              value: datanauts-models
+            - name: MODEL_LOCAL_CACHE_ROOT
+              value: /tmp/model-cache
+            - name: RUNTIME_LOG_BUCKET
+              value: datanauts-runtime
+            - name: SERVING_FEEDBACK_S3_PREFIX
+              value: runtime/serving/feedback
+            - name: AWS_ACCESS_KEY_ID
+              value: mlflow
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: MINIO_ROOT_PASSWORD
           resources:
             requests:
               cpu: "250m"
@@ -66,9 +70,6 @@ spec:
             limits:
               cpu: "2000m"
               memory: "2Gi"
-          volumeMounts:
-            - name: model-storage
-              mountPath: /models
           readinessProbe:
             httpGet:
               path: /health
@@ -83,7 +84,3 @@ spec:
             initialDelaySeconds: 120
             periodSeconds: 20
             timeoutSeconds: 5
-      volumes:
-        - name: model-storage
-          persistentVolumeClaim:
-            claimName: model-storage-pvc

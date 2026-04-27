@@ -18,13 +18,13 @@ spec:
               imagePullPolicy: Always
               env:
                 - name: FEEDBACK_METRICS_PATH
-                  value: /data/feedback_metrics.json
+                  value: /tmp/feedback_metrics.json
                 - name: RETRAIN_DECISION_PATH
-                  value: /data/retrain_decision.json
+                  value: /tmp/retrain_decision.json
                 - name: EVALUATION_METRICS_PATH
-                  value: /data/evaluation_metrics.json
+                  value: /tmp/evaluation_metrics.json
                 - name: MODEL_RELEASES_ROOT
-                  value: /data/model-releases
+                  value: /tmp/model-releases
                 - name: MIN_FEEDBACK_EVENTS
                   value: "500"
                 - name: MAX_CORRECTION_RATE
@@ -35,8 +35,14 @@ spec:
                   value: bert_ner_v4
                 - name: CLASSIFIER_MODEL_NAME
                   value: roberta_clf_v3
+                - name: MODEL_CANDIDATE_PAIRS
+                  value: bert_ner_v4:roberta_clf_v3,contracts_bert_ner_v1:deberta_clf_v1,legal_bert_ner_v1:deberta_clf_v1
+                - name: ENABLE_RAY_TUNE_FOR_RETRAIN
+                  value: "false"
                 - name: FEEDBACK_CHECKPOINT_PATH
-                  value: /data/feedback_checkpoint.json
+                  value: /tmp/feedback_checkpoint.json
+                - name: CURRENT_PRODUCTION_METRICS_PATH
+                  value: /tmp/current_production_metrics.json
                 - name: PAPERLESS_API_URL
                   value: http://paperless-ngx.paperless.svc.cluster.local:8000
                 - name: PAPERLESS_ADMIN_USER
@@ -53,10 +59,34 @@ spec:
                   value: http://mlflow.platform.svc.cluster.local:5000
                 - name: MLFLOW_S3_ENDPOINT_URL
                   value: http://minio.platform.svc.cluster.local:9000
+                - name: OBJECT_STORE_ENDPOINT_URL
+                  value: http://minio.platform.svc.cluster.local:9000
+                - name: RUNTIME_LOG_BUCKET
+                  value: datanauts-runtime
+                - name: MODEL_ARTIFACT_BUCKET
+                  value: datanauts-models
+                - name: FEEDBACK_S3_PREFIX
+                  value: runtime/online-features/feedback
+                - name: EVALUATION_METRICS_S3_KEY
+                  value: automation/evaluation_metrics.json
+                - name: RETRAIN_DECISION_S3_KEY
+                  value: automation/retrain_decision.json
+                - name: FEEDBACK_CHECKPOINT_S3_KEY
+                  value: automation/feedback_checkpoint.json
+                - name: CURRENT_PRODUCTION_METRICS_S3_KEY
+                  value: automation/current_production_metrics.json
+                - name: MIN_CANDIDATE_SCORE
+                  value: "0.45"
+                - name: MAX_SCORE_REGRESSION
+                  value: "0.01"
+                - name: MAX_NER_F1_REGRESSION
+                  value: "0.02"
+                - name: MAX_CLF_F1_REGRESSION
+                  value: "0.02"
+                - name: MAX_E2E_COVERAGE_REGRESSION
+                  value: "0.02"
                 - name: CROSS_DOMAIN_SAMPLES_PATH
                   value: /app/components/training/samples/cross_domain_sample.json
-                - name: PUBLISH_CANONICAL_MODEL
-                  value: "false"
                 - name: AWS_ACCESS_KEY_ID
                   value: mlflow
                 - name: AWS_SECRET_ACCESS_KEY
@@ -66,17 +96,8 @@ spec:
                       key: MINIO_ROOT_PASSWORD
               resources:
                 requests:
-                  cpu: "1000m"
-                  memory: "6Gi"
+                  cpu: "2000m"
+                  memory: "8Gi"
                 limits:
                   cpu: "4000m"
-                  memory: "12Gi"
-              volumeMounts:
-                - name: retrain-data
-                  mountPath: /data
-                - name: retrain-data
-                  mountPath: /app/data
-          volumes:
-            - name: retrain-data
-              persistentVolumeClaim:
-                claimName: model-storage-pvc
+                  memory: "16Gi"

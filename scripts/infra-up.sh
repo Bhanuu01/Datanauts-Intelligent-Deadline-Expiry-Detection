@@ -4,6 +4,19 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TF_DIR="${REPO_ROOT}/infra/terraform/openstack"
 ANSIBLE_DIR="${REPO_ROOT}/infra/ansible"
+BOOTSTRAP_CONFIG_SCRIPT="${REPO_ROOT}/scripts/bootstrap-config.sh"
+
+tfvars_incomplete() {
+  if [ ! -f "${TF_DIR}/terraform.tfvars" ]; then
+    return 0
+  fi
+
+  if grep -Eq 'replace-(me|with-your-)' "${TF_DIR}/terraform.tfvars"; then
+    return 0
+  fi
+
+  return 1
+}
 
 if ! command -v terraform >/dev/null 2>&1; then
   echo "terraform is required but not installed."
@@ -15,21 +28,27 @@ if ! command -v ansible-playbook >/dev/null 2>&1; then
   exit 1
 fi
 
+if tfvars_incomplete; then
+  if [[ -t 0 ]]; then
+    echo "Terraform variables are missing or incomplete."
+    echo "Launching first-run configuration..."
+    "${BOOTSTRAP_CONFIG_SCRIPT}"
+  else
+    echo "Missing or incomplete ${TF_DIR}/terraform.tfvars"
+    echo "Run scripts/bootstrap-config.sh first, or provide the DATANAUTS_* environment variables it expects."
+    exit 1
+  fi
+fi
+
 if [ -z "${OS_CLOUD:-}" ] && [ -z "${OS_AUTH_URL:-}" ]; then
   echo "OpenStack credentials are not loaded."
   echo "Source your Chameleon openrc file first, or export OS_CLOUD / OS_AUTH_URL and related OS_* variables."
   exit 1
 fi
 
-if [ ! -f "${TF_DIR}/terraform.tfvars" ]; then
-  echo "Missing ${TF_DIR}/terraform.tfvars"
-  echo "Create it from infra/terraform/openstack/terraform.tfvars.example first."
-  exit 1
-fi
-
-if grep -Eq 'replace-(me|with-your-)' "${TF_DIR}/terraform.tfvars"; then
+if tfvars_incomplete; then
   echo "${TF_DIR}/terraform.tfvars still contains placeholder values."
-  echo "Fill in your real Chameleon network, reservation, keypair, and SSH key values first."
+  echo "Re-run scripts/bootstrap-config.sh or update the DATANAUTS_* environment variables."
   exit 1
 fi
 

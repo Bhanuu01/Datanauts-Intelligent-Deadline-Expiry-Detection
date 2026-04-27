@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 import sys
 from datetime import datetime
 from datetime import timezone
@@ -9,34 +8,96 @@ from typing import Any
 from typing import Dict
 from typing import List
 
+from mlflow.tracking import MlflowClient
+from components.common.object_store import download_json
+from components.common.object_store import object_store_enabled
+from components.common.object_store import upload_json
+
 DEFAULT_PROMOTION_PATH = "/tmp/promotion_decision.json"
 DEFAULT_RELEASE_PLAN_PATH = "/tmp/release_plan.json"
 DEFAULT_RELEASE_STATE_PATH = "/tmp/release_state.json"
-DEFAULT_RELEASES_ROOT = "/data/model-releases"
+DEFAULT_CURRENT_PRODUCTION_METRICS_PATH = "/tmp/current_production_metrics.json"
+DEFAULT_MLFLOW_TRACKING_URI = "http://mlflow.platform.svc.cluster.local:5000"
 
 
 def load_json(path_env: str, default_path: str) -> Dict[str, Any]:
     path = Path(os.getenv(path_env, default_path))
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text())
+    if path.exists():
+        return json.loads(path.read_text())
+    if object_store_enabled():
+        try:
+            return download_json(
+                os.getenv("RUNTIME_LOG_BUCKET", "datanauts-runtime"),
+                os.getenv(f"{path_env}_S3_KEY", default_path.replace("/tmp/", "automation/")),
+            )
+        except Exception:
+            return {}
+    return {}
 
 
 def load_release_state() -> Dict[str, Any]:
     state_path = Path(os.getenv("RELEASE_STATE_PATH", DEFAULT_RELEASE_STATE_PATH))
-    if not state_path.exists():
-        return {
-            "current_version": "bootstrap",
-            "previous_version": None,
-            "current_stage": os.getenv("CURRENT_RELEASE_STAGE", "staging"),
-        }
-    return json.loads(state_path.read_text())
+    bootstrap_bundle_key = os.getenv("BOOTSTRAP_MODEL_BUNDLE_S3_KEY", "releases/bootstrap/bundle.tar.gz")
+    default_state = {
+        "current_version": "bootstrap",
+        "previous_version": None,
+        "current_stage": os.getenv("CURRENT_RELEASE_STAGE", "staging"),
+        "current_bundle_s3_key": bootstrap_bundle_key,
+        "previous_bundle_s3_key": None,
+    }
+    if state_path.exists():
+        return json.loads(state_path.read_text())
+    if object_store_enabled():
+        try:
+            return download_json(
+                os.getenv("RUNTIME_LOG_BUCKET", "datanauts-runtime"),
+                os.getenv("RELEASE_STATE_S3_KEY", "automation/release_state.json"),
+            )
+        except Exception:
+            return default_state
+    return default_state
 
 
 def save_release_state(state: Dict[str, Any]) -> None:
     state_path = Path(os.getenv("RELEASE_STATE_PATH", DEFAULT_RELEASE_STATE_PATH))
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state, indent=2))
+    if object_store_enabled():
+        upload_json(
+            os.getenv("RUNTIME_LOG_BUCKET", "datanauts-runtime"),
+            os.getenv("RELEASE_STATE_S3_KEY", "automation/release_state.json"),
+            state,
+        )
+
+
+def save_current_production_metrics(metrics: Dict[str, Any]) -> None:
+    metrics_path = Path(os.getenv("CURRENT_PRODUCTION_METRICS_PATH", DEFAULT_CURRENT_PRODUCTION_METRICS_PATH))
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_path.write_text(json.dumps(metrics, indent=2))
+    if object_store_enabled():
+        upload_json(
+            os.getenv("RUNTIME_LOG_BUCKET", "datanauts-runtime"),
+            os.getenv("CURRENT_PRODUCTION_METRICS_S3_KEY", "automation/current_production_metrics.json"),
+            metrics,
+        )
+
+
+def set_model_aliases(model_registry: Dict[str, Any], stage_alias: str) -> None:
+    if os.getenv("SKIP_MODEL_ALIAS_UPDATES", "false").lower() in {"1", "true", "yes"}:
+        return
+    if not model_registry:
+        return
+    client = MlflowClient(tracking_uri=os.getenv("MLFLOW_TRACKING_URI", DEFAULT_MLFLOW_TRACKING_URI))
+    for component, info in model_registry.items():
+        model_name = info.get("registered_model")
+        version = info.get("version")
+        if not model_name or version is None:
+            continue
+        version_str = str(version)
+        client.set_registered_model_alias(model_name, stage_alias, version_str)
+        client.set_registered_model_alias(model_name, f"{component}-{stage_alias}", version_str)
+        if stage_alias == "production":
+            client.set_registered_model_alias(model_name, "champion", version_str)
 
 
 def build_release_plan(promotion_decision: Dict[str, Any], release_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -79,62 +140,25 @@ def build_release_plan(promotion_decision: Dict[str, Any], release_state: Dict[s
         "target_service": os.getenv("LIVE_SERVICE_NAME", "deadline-onnx-serving"),
         "target_selector": {"app": stage_to_app[next_stage]},
         "candidate_version": promotion_decision.get("candidate_version"),
+        "candidate_bundle_s3_key": promotion_decision.get("candidate_bundle_s3_key"),
         "candidate_paths": promotion_decision.get("candidate_paths", {}),
-        "candidate_quantized_paths": promotion_decision.get("candidate_quantized_paths", {}),
+        "model_registry": promotion_decision.get("model_registry", {}),
         "current_version": release_state.get("current_version"),
         "previous_version": release_state.get("previous_version"),
+        "current_model_registry": release_state.get("current_model_registry", {}),
+        "previous_model_registry": release_state.get("previous_model_registry", {}),
         "metrics": {
             "ner_f1": promotion_decision.get("ner_f1"),
             "clf_macro_f1": promotion_decision.get("clf_macro_f1"),
             "e2e_coverage": promotion_decision.get("e2e_coverage"),
             "false_alarm_count": promotion_decision.get("false_alarm_count"),
             "candidate_latency_p95_ms": promotion_decision.get("candidate_latency_p95_ms"),
+            "candidate_score": promotion_decision.get("candidate_score"),
+            "exact_match_pct": promotion_decision.get("exact_match_pct"),
+            "within_30_days_pct": promotion_decision.get("within_30_days_pct"),
+            "cross_domain_accuracy": promotion_decision.get("cross_domain_accuracy"),
         },
     }
-
-
-def replace_directory(source: Path, destination: Path) -> None:
-    if destination.exists():
-        shutil.rmtree(destination)
-    shutil.copytree(source, destination)
-
-
-def canonicalize_current_release(release_state: Dict[str, Any], canonical_root: Path, releases_root: Path) -> None:
-    current_version = release_state.get("current_version")
-    if not current_version or current_version == "bootstrap":
-        return
-
-    current_release_root = releases_root / current_version
-    ner_release_root = current_release_root / "ner"
-    clf_release_root = current_release_root / "classifier"
-    quantized_release_root = current_release_root / "onnx_quantized_model"
-    quantized_clf_release_root = quantized_release_root / "onnx_quantized_clf"
-    quantized_ner_release_root = quantized_release_root / "onnx_quantized_ner"
-    if (
-        ner_release_root.exists()
-        and clf_release_root.exists()
-        and quantized_clf_release_root.exists()
-        and quantized_ner_release_root.exists()
-    ):
-        return
-
-    current_release_root.mkdir(parents=True, exist_ok=True)
-    if (canonical_root / "ner").exists():
-        shutil.copytree(canonical_root / "ner", ner_release_root, dirs_exist_ok=True)
-    if (canonical_root / "classifier").exists():
-        shutil.copytree(canonical_root / "classifier", clf_release_root, dirs_exist_ok=True)
-    if (canonical_root / "onnx_quantized_model" / "onnx_quantized_clf").exists():
-        shutil.copytree(
-            canonical_root / "onnx_quantized_model" / "onnx_quantized_clf",
-            quantized_clf_release_root,
-            dirs_exist_ok=True,
-        )
-    if (canonical_root / "onnx_quantized_model" / "onnx_quantized_ner").exists():
-        shutil.copytree(
-            canonical_root / "onnx_quantized_model" / "onnx_quantized_ner",
-            quantized_ner_release_root,
-            dirs_exist_ok=True,
-        )
 
 
 def patch_live_service(namespace: str, service_name: str, selector: Dict[str, str]) -> None:
@@ -145,24 +169,35 @@ def patch_live_service(namespace: str, service_name: str, selector: Dict[str, st
     api.patch_namespaced_service(name=service_name, namespace=namespace, body=body)
 
 
-def restart_release_deployments(namespace: str, deployment_names: List[str]) -> None:
+def patch_release_deployment_bundle(namespace: str, deployment_name: str, bundle_key: str) -> None:
     from kubernetes import client
 
     apps = client.AppsV1Api()
     restart_annotation = datetime.now(timezone.utc).isoformat()
-    for deployment_name in deployment_names:
-        body = {
-            "spec": {
-                "template": {
-                    "metadata": {
-                        "annotations": {
-                            "kubectl.kubernetes.io/restartedAt": restart_annotation
-                        }
+    body = {
+        "spec": {
+            "template": {
+                "metadata": {
+                    "annotations": {
+                        "kubectl.kubernetes.io/restartedAt": restart_annotation
                     }
-                }
+                },
+                "spec": {
+                    "containers": [
+                        {
+                            "name": deployment_name,
+                            "env": [
+                                {"name": "MODEL_BUNDLE_S3_KEY", "value": bundle_key},
+                                {"name": "MODEL_ARTIFACT_BUCKET", "value": os.getenv("MODEL_ARTIFACT_BUCKET", "datanauts-models")},
+                                {"name": "MODEL_LOCAL_CACHE_ROOT", "value": "/tmp/model-cache"},
+                            ],
+                        }
+                    ]
+                },
             }
         }
-        apps.patch_namespaced_deployment(name=deployment_name, namespace=namespace, body=body)
+    }
+    apps.patch_namespaced_deployment(name=deployment_name, namespace=namespace, body=body)
 
 
 def apply_release_plan(release_plan: Dict[str, Any], release_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -174,9 +209,6 @@ def apply_release_plan(release_plan: Dict[str, Any], release_state: Dict[str, An
         return release_plan
 
     namespace = os.getenv("K8S_NAMESPACE", "ml")
-    canonical_root = Path(os.getenv("MODEL_CANONICAL_ROOT", "/data"))
-    releases_root = Path(os.getenv("MODEL_RELEASES_ROOT", DEFAULT_RELEASES_ROOT))
-    releases_root.mkdir(parents=True, exist_ok=True)
 
     skip_k8s_apply = os.getenv("SKIP_K8S_APPLY", "false").lower() in {"1", "true", "yes"}
     if not skip_k8s_apply:
@@ -189,63 +221,61 @@ def apply_release_plan(release_plan: Dict[str, Any], release_state: Dict[str, An
 
             config.load_kube_config()
 
-    canonicalize_current_release(release_state, canonical_root, releases_root)
+    stage_to_deployment = {
+        "staging": "deadline-onnx-serving-staging",
+        "canary": "deadline-onnx-serving-canary",
+        "production": "deadline-onnx-serving-production",
+    }
 
     if release_plan["action"] == "promote":
-        candidate_paths = release_plan.get("candidate_paths", {})
-        candidate_quantized_paths = release_plan.get("candidate_quantized_paths", {})
-        ner_source = Path(candidate_paths.get("ner", ""))
-        clf_source = Path(candidate_paths.get("classifier", ""))
-        quantized_ner_source = Path(candidate_quantized_paths.get("ner", ""))
-        quantized_clf_source = Path(candidate_quantized_paths.get("classifier", ""))
-        if not ner_source.exists() or not clf_source.exists():
-            raise FileNotFoundError("Candidate model paths are missing; cannot promote release")
-        if not quantized_ner_source.exists() or not quantized_clf_source.exists():
-            raise FileNotFoundError("Candidate ONNX model paths are missing; cannot promote release")
-
         previous_version = release_state.get("current_version")
-        replace_directory(ner_source, canonical_root / "ner")
-        replace_directory(clf_source, canonical_root / "classifier")
-        onnx_root = canonical_root / "onnx_quantized_model"
-        onnx_root.mkdir(parents=True, exist_ok=True)
-        replace_directory(quantized_clf_source, onnx_root / "onnx_quantized_clf")
-        replace_directory(quantized_ner_source, onnx_root / "onnx_quantized_ner")
+        previous_bundle_s3_key = release_state.get("current_bundle_s3_key")
+        previous_metrics = release_state.get("current_metrics")
+        previous_model_registry = release_state.get("current_model_registry")
+        candidate_bundle_s3_key = release_plan.get("candidate_bundle_s3_key")
+        if not candidate_bundle_s3_key:
+            raise FileNotFoundError("Candidate bundle key is missing; cannot promote release")
         release_state["previous_version"] = previous_version
+        release_state["previous_bundle_s3_key"] = previous_bundle_s3_key
+        release_state["previous_metrics"] = previous_metrics
+        release_state["previous_model_registry"] = previous_model_registry
         release_state["current_version"] = release_plan["candidate_version"]
+        release_state["current_bundle_s3_key"] = candidate_bundle_s3_key
         release_state["current_stage"] = release_plan["next_stage"]
+        release_state["current_metrics"] = release_plan.get("metrics", {})
+        release_state["current_model_registry"] = release_plan.get("model_registry", {})
         release_state["last_action"] = "promote"
     else:
         previous_version = release_state.get("previous_version")
+        previous_bundle_s3_key = release_state.get("previous_bundle_s3_key")
+        previous_metrics = release_state.get("previous_metrics", {})
+        previous_model_registry = release_state.get("previous_model_registry", {})
         if not previous_version:
             raise RuntimeError("Rollback requested but no previous version is available")
-
-        rollback_root = releases_root / previous_version
-        replace_directory(rollback_root / "ner", canonical_root / "ner")
-        replace_directory(rollback_root / "classifier", canonical_root / "classifier")
-        replace_directory(
-            rollback_root / "onnx_quantized_model" / "onnx_quantized_clf",
-            canonical_root / "onnx_quantized_model" / "onnx_quantized_clf",
-        )
-        replace_directory(
-            rollback_root / "onnx_quantized_model" / "onnx_quantized_ner",
-            canonical_root / "onnx_quantized_model" / "onnx_quantized_ner",
-        )
+        if not previous_bundle_s3_key:
+            raise RuntimeError("Rollback requested but no previous bundle key is available")
         release_state["current_version"] = previous_version
+        release_state["current_bundle_s3_key"] = previous_bundle_s3_key
+        release_state["current_metrics"] = previous_metrics
+        release_state["current_model_registry"] = previous_model_registry
+        release_state["previous_version"] = None
+        release_state["previous_bundle_s3_key"] = None
+        release_state["previous_metrics"] = None
+        release_state["previous_model_registry"] = None
         release_state["current_stage"] = release_plan["next_stage"]
         release_state["last_action"] = "rollback"
 
     if not skip_k8s_apply:
         patch_live_service(namespace, release_plan["target_service"], release_plan["target_selector"])
-        restart_release_deployments(
-            namespace,
-            [
-                "deadline-onnx-serving",
-                "deadline-onnx-serving-staging",
-                "deadline-onnx-serving-canary",
-                "deadline-onnx-serving-production",
-            ],
-        )
+        deployment_name = stage_to_deployment[release_plan["next_stage"]]
+        bundle_key = release_state.get("current_bundle_s3_key", release_plan.get("candidate_bundle_s3_key", ""))
+        if bundle_key:
+            patch_release_deployment_bundle(namespace, deployment_name, bundle_key)
     save_release_state(release_state)
+    if release_state.get("current_metrics"):
+        save_current_production_metrics(release_state["current_metrics"])
+    if release_state.get("current_model_registry"):
+        set_model_aliases(release_state["current_model_registry"], release_state["current_stage"])
     release_plan["applied"] = True
     release_plan["release_state"] = release_state
     return release_plan
@@ -260,8 +290,14 @@ def main() -> int:
     output_path = Path(os.getenv("RELEASE_PLAN_PATH", DEFAULT_RELEASE_PLAN_PATH))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(release_plan, indent=2))
+    if object_store_enabled():
+        upload_json(
+            os.getenv("RUNTIME_LOG_BUCKET", "datanauts-runtime"),
+            os.getenv("RELEASE_PLAN_S3_KEY", "automation/release_plan.json"),
+            release_plan,
+        )
     print(json.dumps(release_plan, indent=2))
-    return 0 if release_plan["action"] != "reject" else 1
+    return 0
 
 
 if __name__ == "__main__":

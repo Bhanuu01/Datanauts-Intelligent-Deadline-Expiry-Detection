@@ -9,6 +9,8 @@ spec:
     spec:
       template:
         spec:
+          nodeSelector:
+            datanauts.io/storage-node: "true"
           serviceAccountName: release-promotion
           restartPolicy: OnFailure
           containers:
@@ -20,25 +22,33 @@ spec:
                 - name: CURRENT_RELEASE_STAGE
                   value: canary
                 - name: PROMOTION_DECISION_PATH
-                  value: /data/promotion_decision.json
+                  value: /tmp/promotion_decision.json
                 - name: RELEASE_PLAN_PATH
-                  value: /data/release_plan.json
+                  value: /tmp/release_plan.json
                 - name: RELEASE_STATE_PATH
-                  value: /data/release_state.json
-                - name: MODEL_RELEASES_ROOT
-                  value: /data/model-releases
-                - name: MODEL_CANONICAL_ROOT
-                  value: /data
+                  value: /tmp/release_state.json
+                - name: OBJECT_STORE_ENDPOINT_URL
+                  value: http://minio.platform.svc.cluster.local:9000
+                - name: RUNTIME_LOG_BUCKET
+                  value: datanauts-runtime
+                - name: MODEL_ARTIFACT_BUCKET
+                  value: datanauts-models
+                - name: PROMOTION_DECISION_PATH_S3_KEY
+                  value: automation/promotion_decision.json
+                - name: RELEASE_PLAN_S3_KEY
+                  value: automation/release_plan.json
+                - name: RELEASE_STATE_S3_KEY
+                  value: automation/release_state.json
+                - name: AWS_ACCESS_KEY_ID
+                  value: mlflow
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: platform-secrets
+                      key: MINIO_ROOT_PASSWORD
                 - name: AUTO_APPLY_RELEASE
                   value: "true"
                 - name: LIVE_SERVICE_NAME
                   value: deadline-onnx-serving
                 - name: K8S_NAMESPACE
                   value: ml
-              volumeMounts:
-                - name: release-data
-                  mountPath: /data
-          volumes:
-            - name: release-data
-              persistentVolumeClaim:
-                claimName: model-storage-pvc

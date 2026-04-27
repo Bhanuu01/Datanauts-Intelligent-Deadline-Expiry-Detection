@@ -9,6 +9,8 @@ spec:
     spec:
       template:
         spec:
+          nodeSelector:
+            datanauts.io/storage-node: "true"
           restartPolicy: OnFailure
           containers:
             - name: model-promotion-gate
@@ -17,11 +19,28 @@ spec:
               command: ["python", "/app/components/platform_automation/evaluate_and_promote.py"]
               env:
                 - name: EVALUATION_METRICS_PATH
-                  value: /data/evaluation_metrics.json
+                  value: /tmp/evaluation_metrics.json
                 - name: SERVING_METRICS_PATH
-                  value: /data/serving_metrics.json
+                  value: /tmp/serving_metrics.json
                 - name: PROMOTION_DECISION_PATH
-                  value: /data/promotion_decision.json
+                  value: /tmp/promotion_decision.json
+                - name: OBJECT_STORE_ENDPOINT_URL
+                  value: http://minio.platform.svc.cluster.local:9000
+                - name: RUNTIME_LOG_BUCKET
+                  value: datanauts-runtime
+                - name: EVALUATION_METRICS_S3_KEY
+                  value: automation/evaluation_metrics.json
+                - name: SERVING_METRICS_S3_KEY
+                  value: automation/serving_metrics.json
+                - name: PROMOTION_DECISION_S3_KEY
+                  value: automation/promotion_decision.json
+                - name: AWS_ACCESS_KEY_ID
+                  value: mlflow
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: platform-secrets
+                      key: MINIO_ROOT_PASSWORD
                 - name: MIN_NER_F1
                   value: "0.64"
                 - name: MIN_CLF_MACRO_F1
@@ -45,10 +64,3 @@ spec:
                 limits:
                   cpu: "1000m"
                   memory: "1Gi"
-              volumeMounts:
-                - name: promotion-data
-                  mountPath: /data
-          volumes:
-            - name: promotion-data
-              persistentVolumeClaim:
-                claimName: model-storage-pvc

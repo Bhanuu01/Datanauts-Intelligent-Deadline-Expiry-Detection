@@ -56,7 +56,50 @@ IMAGE_REGISTRY_OWNER="${IMAGE_REGISTRY_OWNER,,}"
 rollout_status() {
   local namespace="$1"
   local deployment="$2"
-  kubectl rollout status "deployment/${deployment}" -n "${namespace}" --timeout=300s
+  local timeout="${3:-300s}"
+
+  if kubectl rollout status "deployment/${deployment}" -n "${namespace}" --timeout="${timeout}"; then
+    return 0
+  fi
+
+  echo "Rollout status timed out for deployment/${deployment} in namespace ${namespace}. Inspecting deployment health..." >&2
+
+  local replicas observed_generation generation updated_replicas available_replicas unavailable_replicas
+  replicas="$(kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.spec.replicas}')"
+  generation="$(kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.metadata.generation}')"
+  observed_generation="$(kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.status.observedGeneration}')"
+  updated_replicas="$(kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.status.updatedReplicas}')"
+  available_replicas="$(kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.status.availableReplicas}')"
+  unavailable_replicas="$(kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.status.unavailableReplicas}')"
+
+  replicas="${replicas:-0}"
+  generation="${generation:-0}"
+  observed_generation="${observed_generation:-0}"
+  updated_replicas="${updated_replicas:-0}"
+  available_replicas="${available_replicas:-0}"
+  unavailable_replicas="${unavailable_replicas:-0}"
+
+  if [[ "${observed_generation}" -ge "${generation}" ]] && \
+     [[ "${updated_replicas}" -ge "${replicas}" ]] && \
+     [[ "${available_replicas}" -ge "${replicas}" ]] && \
+     [[ "${unavailable_replicas}" -eq 0 ]]; then
+    echo "Deployment ${namespace}/${deployment} is healthy on the new ReplicaSet; accepting rollout despite slow old-pod termination." >&2
+    kubectl get deployment "${deployment}" -n "${namespace}" -o wide
+    return 0
+  fi
+
+  echo "Deployment ${namespace}/${deployment} is not healthy after timeout." >&2
+  kubectl get deployment "${deployment}" -n "${namespace}" -o wide || true
+  kubectl describe deployment "${deployment}" -n "${namespace}" || true
+  kubectl get pods -n "${namespace}" -l "app=${deployment}" -o wide || true
+  return 1
+}
+
+restart_deployment() {
+  local namespace="$1"
+  local deployment="$2"
+  echo "Restarting deployment/${deployment} in namespace ${namespace} to pick up refreshed :latest images"
+  kubectl rollout restart "deployment/${deployment}" -n "${namespace}"
 }
 
 echo "Preparing rendered manifest workspace at ${RENDER_ROOT}"
@@ -141,6 +184,14 @@ if [[ "${RUN_BOOTSTRAP_JOB}" == "true" ]]; then
   kubectl apply -f "${RENDERED_K8S_ROOT}/ml/model-bootstrap-job.yaml"
   kubectl wait --for=condition=complete job/model-bootstrap -n ml --timeout=3600s
 fi
+
+echo "Restarting image-based workloads"
+restart_deployment ml data-generator
+restart_deployment ml online-features
+restart_deployment ml deadline-onnx-serving
+restart_deployment ml deadline-onnx-serving-staging
+restart_deployment ml deadline-onnx-serving-canary
+restart_deployment ml deadline-onnx-serving-production
 
 echo "Waiting for rollouts"
 rollout_status paperless postgres

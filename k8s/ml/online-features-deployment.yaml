@@ -14,15 +14,15 @@ spec:
         app: online-features
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/path: /metrics
         prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
     spec:
       nodeSelector:
         datanauts.io/durable-node: "true"
       containers:
         - name: online-features
           image: ghcr.io/bhanuu01/datanauts-online-features:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           env:
@@ -30,17 +30,24 @@ spec:
               value: redis.paperless.svc.cluster.local
             - name: REDIS_PORT
               value: "6379"
-            - name: RUNTIME_DATA_S3_ENDPOINT_URL
+            - name: PRODUCTION_DATA_LOG_PATH
+              value: /tmp/production_ingest.jsonl
+            - name: FEEDBACK_LOG_PATH
+              value: /tmp/feedback_events.jsonl
+            - name: OBJECT_STORE_ENDPOINT_URL
               value: http://minio.platform.svc.cluster.local:9000
-            - name: RUNTIME_DATA_BUCKET
+            - name: RUNTIME_LOG_BUCKET
               value: datanauts-runtime
+            - name: PRODUCTION_DATA_S3_PREFIX
+              value: runtime/online-features/ingest
+            - name: FEEDBACK_S3_PREFIX
+              value: runtime/online-features/feedback
             - name: AWS_ACCESS_KEY_ID
               value: mlflow
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
                   name: platform-secrets
-
                   key: MINIO_ROOT_PASSWORD
             - name: CHAMELEON_BUCKET
               value: "object_storage_proj11"
@@ -67,9 +74,6 @@ spec:
             limits:
               cpu: "1000m"
               memory: "512Mi"
-          volumeMounts:
-            - name: feedback-storage
-              mountPath: /data
           readinessProbe:
             httpGet:
               path: /health
@@ -82,7 +86,3 @@ spec:
               port: 8000
             initialDelaySeconds: 30
             periodSeconds: 20
-      volumes:
-        - name: feedback-storage
-          persistentVolumeClaim:
-            claimName: model-storage-pvc
