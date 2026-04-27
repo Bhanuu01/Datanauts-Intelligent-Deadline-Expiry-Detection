@@ -95,6 +95,13 @@ rollout_status() {
   return 1
 }
 
+restart_deployment() {
+  local namespace="$1"
+  local deployment="$2"
+  echo "Restarting deployment/${deployment} in namespace ${namespace} to pick up refreshed :latest images"
+  kubectl rollout restart "deployment/${deployment}" -n "${namespace}"
+}
+
 echo "Preparing rendered manifest workspace at ${RENDER_ROOT}"
 rm -rf "${RENDER_ROOT}"
 mkdir -p "${RENDER_ROOT}"
@@ -177,6 +184,14 @@ if [[ "${RUN_BOOTSTRAP_JOB}" == "true" ]]; then
   kubectl apply -f "${RENDERED_K8S_ROOT}/ml/model-bootstrap-job.yaml"
   kubectl wait --for=condition=complete job/model-bootstrap -n ml --timeout=3600s
 fi
+
+echo "Restarting image-based workloads"
+restart_deployment ml data-generator
+restart_deployment ml online-features
+restart_deployment ml deadline-onnx-serving
+restart_deployment ml deadline-onnx-serving-staging
+restart_deployment ml deadline-onnx-serving-canary
+restart_deployment ml deadline-onnx-serving-production
 
 echo "Waiting for rollouts"
 rollout_status paperless postgres

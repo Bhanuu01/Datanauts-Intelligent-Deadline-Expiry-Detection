@@ -22,7 +22,7 @@ spec:
       containers:
         - name: online-features
           image: ghcr.io/bhanuu01/datanauts-online-features:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           env:
