@@ -83,6 +83,8 @@ def save_current_production_metrics(metrics: Dict[str, Any]) -> None:
 
 
 def set_model_aliases(model_registry: Dict[str, Any], stage_alias: str) -> None:
+    if os.getenv("SKIP_MODEL_ALIAS_UPDATES", "false").lower() in {"1", "true", "yes"}:
+        return
     if not model_registry:
         return
     client = MlflowClient(tracking_uri=os.getenv("MLFLOW_TRACKING_URI", DEFAULT_MLFLOW_TRACKING_URI))
