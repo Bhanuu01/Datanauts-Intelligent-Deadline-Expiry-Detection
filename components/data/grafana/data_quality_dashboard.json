@@ -72,10 +72,10 @@
     },
     {
       "id": 8,
-      "title": "Live Inference — Documents Ingested (Rate/min)",
+      "title": "Live Inference — Documents Ingested (Range)",
       "type": "stat",
       "gridPos": {"h": 4, "w": 6, "x": 0, "y": 9},
-      "targets": [{"expr": "rate(data_inference_document_count[5m]) * 60", "legendFormat": "Docs/min", "instant": true}],
+      "targets": [{"expr": "sum(increase(online_features_ingest_requests_total[$__range])) or vector(0)", "legendFormat": "Documents"}],
       "options": {"colorMode": "background", "graphMode": "area", "textMode": "auto", "reduceOptions": {"calcs": ["lastNotNull"]}},
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": 0}]}, "color": {"mode": "fixed", "fixedColor": "blue"}}}
     },
