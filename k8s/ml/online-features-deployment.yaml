@@ -43,7 +43,7 @@ spec:
 
                   key: MINIO_ROOT_PASSWORD
             - name: CHAMELEON_BUCKET
-              value: "cuad-data-proj11-v2"
+              value: "object_storage_proj11"
             - name: OS_AUTH_URL
               value: "https://chi.tacc.chameleoncloud.org:5000/v3"
             - name: OS_APPLICATION_CREDENTIAL_ID
