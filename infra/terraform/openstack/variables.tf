@@ -104,6 +104,18 @@ variable "enable_durable_block_storage" {
   default     = true
 }
 
+variable "existing_durable_volume_id" {
+  description = "Optional existing OpenStack block volume UUID to attach as the shared durable Kubernetes data disk."
+  type        = string
+  default     = ""
+}
+
+variable "existing_durable_volume_device" {
+  description = "Guest device path for the attached existing shared durable block volume."
+  type        = string
+  default     = "/dev/vdb"
+}
+
 variable "paperless_volume_size_gib" {
   description = "Size of the Cinder volume that stores Paperless data, media, and database files."
   type        = number

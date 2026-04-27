@@ -7,6 +7,8 @@ spec:
   backoffLimit: 0
   template:
     spec:
+      nodeSelector:
+        datanauts.io/durable-node: "true"
       restartPolicy: Never
       containers:
         - name: model-bootstrap

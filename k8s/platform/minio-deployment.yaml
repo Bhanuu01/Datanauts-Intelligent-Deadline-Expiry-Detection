@@ -13,6 +13,8 @@ spec:
       labels:
         app: minio
     spec:
+      nodeSelector:
+        datanauts.io/durable-node: "true"
       containers:
         - name: minio
           image: minio/minio:latest

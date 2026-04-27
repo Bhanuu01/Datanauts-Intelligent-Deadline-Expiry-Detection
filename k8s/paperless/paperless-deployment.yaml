@@ -13,6 +13,8 @@ spec:
       labels:
         app: paperless-ngx
     spec:
+      nodeSelector:
+        datanauts.io/durable-node: "true"
       initContainers:
         - name: wait-for-postgres
           image: busybox

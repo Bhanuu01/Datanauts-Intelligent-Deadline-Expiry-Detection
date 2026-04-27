@@ -13,6 +13,8 @@ spec:
       labels:
         app: mlflow
     spec:
+      nodeSelector:
+        datanauts.io/durable-node: "true"
       containers:
         - name: mlflow
           image: ghcr.io/mlflow/mlflow:latest

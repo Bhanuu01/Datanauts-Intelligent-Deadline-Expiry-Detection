@@ -128,25 +128,25 @@ resource "openstack_networking_floatingip_v2" "worker" {
 }
 
 resource "openstack_blockstorage_volume_v3" "paperless" {
-  count = var.enable_durable_block_storage ? 1 : 0
+  count = var.enable_durable_block_storage && var.existing_durable_volume_id == "" ? 1 : 0
   name  = "${var.cluster_name}-paperless"
   size  = var.paperless_volume_size_gib
 }
 
 resource "openstack_blockstorage_volume_v3" "platform" {
-  count = var.enable_durable_block_storage ? 1 : 0
+  count = var.enable_durable_block_storage && var.existing_durable_volume_id == "" ? 1 : 0
   name  = "${var.cluster_name}-platform"
   size  = var.platform_volume_size_gib
 }
 
 resource "openstack_blockstorage_volume_v3" "ml" {
-  count = var.enable_durable_block_storage ? 1 : 0
+  count = var.enable_durable_block_storage && var.existing_durable_volume_id == "" ? 1 : 0
   name  = "${var.cluster_name}-ml"
   size  = var.ml_volume_size_gib
 }
 
 resource "openstack_blockstorage_volume_v3" "monitoring" {
-  count = var.enable_durable_block_storage ? 1 : 0
+  count = var.enable_durable_block_storage && var.existing_durable_volume_id == "" ? 1 : 0
   name  = "${var.cluster_name}-monitoring"
   size  = var.monitoring_volume_size_gib
 }
@@ -200,31 +200,38 @@ resource "openstack_compute_instance_v2" "worker" {
 }
 
 resource "openstack_compute_volume_attach_v2" "paperless" {
-  count       = var.enable_durable_block_storage ? 1 : 0
+  count       = var.enable_durable_block_storage && var.existing_durable_volume_id == "" ? 1 : 0
   instance_id = openstack_compute_instance_v2.control_plane.id
   volume_id   = openstack_blockstorage_volume_v3.paperless[0].id
   device      = var.paperless_volume_device
 }
 
 resource "openstack_compute_volume_attach_v2" "platform" {
-  count       = var.enable_durable_block_storage ? 1 : 0
+  count       = var.enable_durable_block_storage && var.existing_durable_volume_id == "" ? 1 : 0
   instance_id = openstack_compute_instance_v2.control_plane.id
   volume_id   = openstack_blockstorage_volume_v3.platform[0].id
   device      = var.platform_volume_device
 }
 
 resource "openstack_compute_volume_attach_v2" "ml" {
-  count       = var.enable_durable_block_storage ? 1 : 0
+  count       = var.enable_durable_block_storage && var.existing_durable_volume_id == "" ? 1 : 0
   instance_id = openstack_compute_instance_v2.control_plane.id
   volume_id   = openstack_blockstorage_volume_v3.ml[0].id
   device      = var.ml_volume_device
 }
 
 resource "openstack_compute_volume_attach_v2" "monitoring" {
-  count       = var.enable_durable_block_storage ? 1 : 0
+  count       = var.enable_durable_block_storage && var.existing_durable_volume_id == "" ? 1 : 0
   instance_id = openstack_compute_instance_v2.control_plane.id
   volume_id   = openstack_blockstorage_volume_v3.monitoring[0].id
   device      = var.monitoring_volume_device
+}
+
+resource "openstack_compute_volume_attach_v2" "shared_durable" {
+  count       = var.enable_durable_block_storage && var.existing_durable_volume_id != "" ? 1 : 0
+  instance_id = openstack_compute_instance_v2.control_plane.id
+  volume_id   = var.existing_durable_volume_id
+  device      = var.existing_durable_volume_device
 }
 
 resource "openstack_networking_floatingip_associate_v2" "control_plane" {

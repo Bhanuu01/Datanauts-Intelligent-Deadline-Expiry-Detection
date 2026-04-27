@@ -19,6 +19,8 @@ spec:
         prometheus.io/port: "8004"
         prometheus.io/path: /metrics
     spec:
+      nodeSelector:
+        datanauts.io/durable-node: "true"
       initContainers:
         - name: wait-for-onnx-models
           image: busybox:1.36

@@ -27,6 +27,8 @@ spec:
       labels:
         app: mlflow-postgres
     spec:
+      nodeSelector:
+        datanauts.io/durable-node: "true"
       containers:
         - name: postgres
           image: postgres:15

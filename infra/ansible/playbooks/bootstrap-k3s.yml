@@ -5,6 +5,15 @@
   gather_facts: false
   vars:
     durable_volume_mount_root: /srv/datanauts-volumes
+    durable_volume_shared_subdirs:
+      - paperless/data
+      - paperless/media
+      - paperless/postgres
+      - platform/minio
+      - platform/mlflow
+      - platform/mlflow-postgres
+      - ml/model-storage
+      - monitoring/prometheus
     durable_volume_layout:
       - name: paperless
         device: "{{ paperless_volume_device | default('/dev/vdb') }}"
@@ -111,9 +120,44 @@
       loop: "{{ durable_volume_layout }}"
       when:
         - durable_block_storage_enabled | default(false) | bool
+        - not (using_existing_durable_volume | default(false) | bool)
         - "'control_plane' in group_names"
 
-    - name: Format and mount durable block volumes on the control plane
+    - name: Wait for shared durable block device to appear on the control plane
+      ansible.builtin.wait_for:
+        path: "{{ existing_durable_volume_device | default('/dev/vdb') }}"
+        timeout: 300
+      when:
+        - durable_block_storage_enabled | default(false) | bool
+        - using_existing_durable_volume | default(false) | bool
+        - "'control_plane' in group_names"
+
+    - name: Format and mount shared durable block volume on the control plane
+      ansible.builtin.shell: |
+        set -euo pipefail
+        device="{{ existing_durable_volume_device | default('/dev/vdb') }}"
+        mount_point="{{ durable_volume_mount_root }}"
+        if ! blkid "${device}" >/dev/null 2>&1; then
+          mkfs.ext4 -F -L "datanauts-shared" "${device}"
+        fi
+        uuid="$(blkid -o value -s UUID "${device}")"
+        mkdir -p "${mount_point}"
+        if ! grep -q "UUID=${uuid} " /etc/fstab; then
+          echo "UUID=${uuid} ${mount_point} ext4 defaults,nofail 0 2" >> /etc/fstab
+        fi
+        mountpoint -q "${mount_point}" || mount "${mount_point}"
+        {% for subdir in durable_volume_shared_subdirs %}
+        mkdir -p "${mount_point}/{{ subdir }}"
+        {% endfor %}
+      args:
+        executable: /bin/bash
+      when:
+        - durable_block_storage_enabled | default(false) | bool
+        - using_existing_durable_volume | default(false) | bool
+        - "'control_plane' in group_names"
+      changed_when: false
+
+    - name: Format and mount split durable block volumes on the control plane
       ansible.builtin.shell: |
         set -euo pipefail
         device="{{ item.device }}"
@@ -135,6 +179,7 @@
       loop: "{{ durable_volume_layout }}"
       when:
         - durable_block_storage_enabled | default(false) | bool
+        - not (using_existing_durable_volume | default(false) | bool)
         - "'control_plane' in group_names"
       changed_when: false
 
@@ -220,6 +265,19 @@
       args:
         executable: /bin/bash
       when: not k3s_agent_service.stat.exists
+
+    - name: Label worker nodes for stateless workloads
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - label
+          - node
+          - "{{ node_name | default(inventory_hostname) }}"
+          - datanauts.io/worker-node=true
+          - --overwrite
+      changed_when: false
 
 - name: Verify cluster node count
   hosts: control_plane

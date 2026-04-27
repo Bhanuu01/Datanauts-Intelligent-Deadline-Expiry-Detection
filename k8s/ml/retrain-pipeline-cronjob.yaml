@@ -9,6 +9,8 @@ spec:
     spec:
       template:
         spec:
+          nodeSelector:
+            datanauts.io/durable-node: "true"
           restartPolicy: OnFailure
           containers:
             - name: retrain-pipeline

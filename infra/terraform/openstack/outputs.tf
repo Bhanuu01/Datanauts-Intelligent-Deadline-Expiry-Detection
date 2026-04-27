@@ -54,6 +54,16 @@ output "enable_durable_block_storage" {
   description = "Whether durable OpenStack block volumes are enabled."
 }
 
+output "using_existing_durable_volume" {
+  value       = var.enable_durable_block_storage && var.existing_durable_volume_id != ""
+  description = "Whether an existing shared durable block volume is being reused."
+}
+
+output "existing_durable_volume_device" {
+  value       = var.existing_durable_volume_device
+  description = "Guest device path for the shared durable volume when reusing an existing block volume."
+}
+
 output "paperless_volume_device" {
   value       = var.paperless_volume_device
   description = "Guest device path for the Paperless durable volume."

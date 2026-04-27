@@ -16,7 +16,8 @@ fi
 
 if terraform -chdir="${TF_DIR}" output -raw enable_durable_block_storage >/dev/null 2>&1; then
   durable_enabled="$(terraform -chdir="${TF_DIR}" output -raw enable_durable_block_storage)"
-  if [ "${durable_enabled}" = "true" ] && [ "${ALLOW_DURABLE_VOLUME_DESTROY:-false}" != "true" ]; then
+  using_existing_volume="$(terraform -chdir="${TF_DIR}" output -raw using_existing_durable_volume 2>/dev/null || echo false)"
+  if [ "${durable_enabled}" = "true" ] && [ "${using_existing_volume}" != "true" ] && [ "${ALLOW_DURABLE_VOLUME_DESTROY:-false}" != "true" ]; then
     echo "Durable OpenStack block volumes are enabled for this cluster."
     echo "Refusing to run a full terraform destroy because it would also delete durable data volumes."
     echo "If you really want to destroy the volumes too, rerun with ALLOW_DURABLE_VOLUME_DESTROY=true."
