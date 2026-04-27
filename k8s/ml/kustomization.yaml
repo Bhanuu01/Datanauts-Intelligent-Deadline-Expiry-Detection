@@ -4,6 +4,7 @@ resources:
   - model-storage-pvc.yaml
   - data-generator-deployment.yaml
   - online-features-deployment.yaml
+  - online-features-hpa.yaml
   - online-features-service.yaml
   - onnx-serving-deployment.yaml
   - onnx-serving-service.yaml

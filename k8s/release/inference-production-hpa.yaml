@@ -1,13 +1,13 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: deadline-onnx-serving
+  name: deadline-onnx-serving-production
   namespace: ml
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: deadline-onnx-serving
+    name: deadline-onnx-serving-production
   minReplicas: 1
   maxReplicas: 3
   behavior:

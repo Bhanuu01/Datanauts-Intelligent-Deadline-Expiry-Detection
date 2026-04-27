@@ -1,9 +1,12 @@
 resources:
   - release-promotion-rbac.yaml
   - inference-staging-deployment.yaml
+  - inference-staging-hpa.yaml
   - inference-staging-service.yaml
   - inference-canary-deployment.yaml
+  - inference-canary-hpa.yaml
   - inference-canary-service.yaml
   - inference-production-deployment.yaml
+  - inference-production-hpa.yaml
   - inference-production-service.yaml
   - release-promotion-cronjob.yaml

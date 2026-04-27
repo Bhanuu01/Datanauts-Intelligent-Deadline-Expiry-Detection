@@ -1,15 +1,15 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: deadline-onnx-serving
+  name: deadline-onnx-serving-canary
   namespace: ml
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: deadline-onnx-serving
+    name: deadline-onnx-serving-canary
   minReplicas: 1
-  maxReplicas: 3
+  maxReplicas: 2
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -19,7 +19,7 @@ spec:
           value: 100
           periodSeconds: 60
         - type: Pods
-          value: 2
+          value: 1
           periodSeconds: 60
     scaleDown:
       stabilizationWindowSeconds: 300
