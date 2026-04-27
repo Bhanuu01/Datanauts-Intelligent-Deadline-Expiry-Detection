@@ -139,7 +139,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ env.REGISTRY_OWNER_LC }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build image
