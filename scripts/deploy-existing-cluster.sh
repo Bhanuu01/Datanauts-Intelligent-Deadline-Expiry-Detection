@@ -10,6 +10,9 @@ CONTROL_PLANE_NODE_NAME="${CONTROL_PLANE_NODE_NAME:-}"
 RUN_BOOTSTRAP_JOB="${RUN_BOOTSTRAP_JOB:-false}"
 USE_EXISTING_SOURCE_SECRETS="${USE_EXISTING_SOURCE_SECRETS:-true}"
 PUBLIC_HOST="${PUBLIC_HOST:-${CONTROL_PLANE_PUBLIC_IP}}"
+GHCR_USERNAME="${GHCR_USERNAME:-}"
+GHCR_TOKEN="${GHCR_TOKEN:-}"
+IMAGE_REGISTRY_OWNER="${IMAGE_REGISTRY_OWNER:-}"
 
 require_command() {
   local cmd="$1"
@@ -41,6 +44,11 @@ if [[ -z "${CONTROL_PLANE_NODE_NAME}" ]]; then
   exit 1
 fi
 
+if [[ -z "${IMAGE_REGISTRY_OWNER}" ]]; then
+  IMAGE_REGISTRY_OWNER="bhanuu01"
+fi
+IMAGE_REGISTRY_OWNER="${IMAGE_REGISTRY_OWNER,,}"
+
 rollout_status() {
   local namespace="$1"
   local deployment="$2"
@@ -67,11 +75,29 @@ sed -i.bak "s/__CONTROL_PLANE_NODE_NAME__/${CONTROL_PLANE_NODE_NAME}/g" \
   "${RENDERED_K8S_ROOT}/durable-pvs.yaml"
 rm -f "${RENDERED_K8S_ROOT}/durable-pvs.yaml.bak"
 
+find "${RENDERED_K8S_ROOT}" -type f \( -name '*.yaml' -o -name '*.yml' \) -print0 | \
+  while IFS= read -r -d '' manifest; do
+    sed -i.bak "s#ghcr\\.io/bhanuu01/#ghcr.io/${IMAGE_REGISTRY_OWNER}/#g" "${manifest}"
+    rm -f "${manifest}.bak"
+  done
+
 echo "Applying namespaces"
 kubectl apply -f "${RENDERED_K8S_ROOT}/namespace-paperless.yaml"
 kubectl apply -f "${RENDERED_K8S_ROOT}/namespace-platform.yaml"
 kubectl apply -f "${RENDERED_K8S_ROOT}/namespace-ml.yaml"
 kubectl apply -f "${RENDERED_K8S_ROOT}/monitoring/namespace.yaml"
+
+if [[ -n "${GHCR_USERNAME}" && -n "${GHCR_TOKEN}" ]]; then
+  echo "Refreshing GHCR pull secret in ml namespace"
+  kubectl create secret docker-registry ghcr-pull-secret \
+    --namespace=ml \
+    --docker-server=ghcr.io \
+    --docker-username="${GHCR_USERNAME}" \
+    --docker-password="${GHCR_TOKEN}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  kubectl patch serviceaccount default -n ml --type merge \
+    -p '{"imagePullSecrets":[{"name":"ghcr-pull-secret"}]}'
+fi
 
 echo "Refreshing runtime secrets"
 USE_EXISTING_SOURCE_SECRETS="${USE_EXISTING_SOURCE_SECRETS}" \
@@ -99,6 +125,11 @@ kubectl apply -k "${RENDERED_K8S_ROOT}/ml"
 
 echo "Applying release manifests"
 kubectl apply -k "${RENDERED_K8S_ROOT}/release"
+
+if [[ -n "${GHCR_USERNAME}" && -n "${GHCR_TOKEN}" ]]; then
+  kubectl patch serviceaccount release-promotion -n ml --type merge \
+    -p '{"imagePullSecrets":[{"name":"ghcr-pull-secret"}]}' || true
+fi
 
 if [[ "${RUN_BOOTSTRAP_JOB}" == "true" ]]; then
   echo "Recreating bootstrap training job"
