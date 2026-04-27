@@ -129,7 +129,6 @@ SECTIONS = {
 
 # ── Chameleon config ──────────────────────────────────────────────
 CHAMELEON_BUCKET = os.getenv('CHAMELEON_BUCKET', 'cuad-data-proj11-v2')
-CHAMELEON_BUCKET_MIRROR = os.getenv('CHAMELEON_BUCKET_MIRROR', 'object_storage_proj11')
 CHAMELEON_AUTH_URL = os.getenv('OS_AUTH_URL', 'https://chi.tacc.chameleoncloud.org:5000/v3')
 CHAMELEON_CREDENTIAL_ID = os.getenv('OS_APPLICATION_CREDENTIAL_ID', '')
 CHAMELEON_CREDENTIAL_SECRET = os.getenv('OS_APPLICATION_CREDENTIAL_SECRET', '')
@@ -167,14 +166,8 @@ def mirror_to_chameleon(local_path: Path, object_name: str):
             name=object_name,
             filename=str(local_path),
         )
-        print(f'[chameleon] mirrored -> {CHAMELEON_BUCKET}/{object_name}')
-        conn.object_store.upload_object(
-            container=CHAMELEON_BUCKET_MIRROR,
-            name=object_name,
-            filename=str(local_path),
-        )
-        print(f'[chameleon] mirrored -> {CHAMELEON_BUCKET_MIRROR}/{object_name}')
         CHAMELEON_MIRROR_SUCCESS.set(1)
+        print(f'[chameleon] mirrored {local_path.name} -> {CHAMELEON_BUCKET}/{object_name}')
     except Exception as exc:
         CHAMELEON_MIRROR_SUCCESS.set(0)
         print(f'[chameleon] mirror error: {exc}')
