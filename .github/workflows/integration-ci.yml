@@ -105,7 +105,7 @@ jobs:
         include:
           - image: datanauts-online-features
             dockerfile: components/data/online_features/Dockerfile
-            context: components/data/online_features
+            context: .
           - image: datanauts-data-generator
             dockerfile: components/data/data_generator/Dockerfile
             context: components/data/data_generator
