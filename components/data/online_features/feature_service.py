@@ -128,8 +128,7 @@ SECTIONS = {
 }
 
 # ── Chameleon config ──────────────────────────────────────────────
-CHAMELEON_BUCKET = os.getenv('CHAMELEON_BUCKET', 'cuad-data-proj11-v2')
-CHAMELEON_BUCKET_MIRROR = os.getenv('CHAMELEON_BUCKET_MIRROR', 'object_storage_proj11')
+CHAMELEON_BUCKET = os.getenv('CHAMELEON_BUCKET', 'object_storage_proj11')
 CHAMELEON_AUTH_URL = os.getenv('OS_AUTH_URL', 'https://chi.tacc.chameleoncloud.org:5000/v3')
 CHAMELEON_CREDENTIAL_ID = os.getenv('OS_APPLICATION_CREDENTIAL_ID', '')
 CHAMELEON_CREDENTIAL_SECRET = os.getenv('OS_APPLICATION_CREDENTIAL_SECRET', '')
@@ -152,7 +151,7 @@ class FeedbackRequest(BaseModel):
 
 
 def mirror_to_chameleon(local_path: Path, object_name: str):
-    """Mirror file to Chameleon OpenStack Swift bucket cuad-data-proj11-v2."""
+    """Mirror file to Chameleon OpenStack Swift bucket object_storage_proj11."""
     if not CHAMELEON_CREDENTIAL_ID or not CHAMELEON_CREDENTIAL_SECRET:
         print('[chameleon] credentials not set, skipping mirror')
         return
@@ -168,12 +167,6 @@ def mirror_to_chameleon(local_path: Path, object_name: str):
             filename=str(local_path),
         )
         print(f'[chameleon] mirrored -> {CHAMELEON_BUCKET}/{object_name}')
-        conn.object_store.upload_object(
-            container=CHAMELEON_BUCKET_MIRROR,
-            name=object_name,
-            filename=str(local_path),
-        )
-        print(f'[chameleon] mirrored -> {CHAMELEON_BUCKET_MIRROR}/{object_name}')
         CHAMELEON_MIRROR_SUCCESS.set(1)
     except Exception as exc:
         CHAMELEON_MIRROR_SUCCESS.set(0)
@@ -340,7 +333,7 @@ def data_quality_status():
         'data_team_member': 'Tanvi Takavane (tt2884)',
         'dataset': 'tanvitakavane/datanauts_project_cuad-deadline-ner-version2',
         'chameleon_bucket': CHAMELEON_BUCKET,
-        'bucket_url': 'https://chi.tacc.chameleoncloud.org/project/containers/container/cuad-data-proj11-v2',
+        'bucket_url': 'https://chi.tacc.chameleoncloud.org/project/containers/container/object_storage_proj11',
         'evaluation_points': {
             'EP1_ingestion_quality': {
                 'status': 'PASSED', 'checks_total': 12, 'checks_failed': 0,
