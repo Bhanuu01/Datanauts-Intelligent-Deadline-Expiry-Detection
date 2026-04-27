@@ -1652,8 +1652,8 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "(container_memory_working_set_bytes{namespace=\"platform\",pod=~\"mlflow.*|minio.*\",container!=\"\",image!=\"\"}) / on(namespace,pod,container) kube_pod_container_resource_limits{namespace=\"platform\",resource=\"memory\",unit=\"byte\"}",
-              "legendFormat": "{{pod}}",
+              "expr": "(sum(container_memory_working_set_bytes{namespace=\"platform\",pod=~\"mlflow.*|minio.*\",container!=\"\",image!=\"\"}) / sum(kube_pod_container_resource_limits{namespace=\"platform\",pod=~\"mlflow.*|minio.*\",resource=\"memory\",unit=\"byte\"})) or vector(0)",
+              "legendFormat": "platform",
               "range": true,
               "refId": "A"
             }
@@ -1696,8 +1696,8 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "(container_memory_working_set_bytes{namespace=\"monitoring\",pod=~\"grafana.*|prometheus.*\",container!=\"\",image!=\"\"}) / on(namespace,pod,container) kube_pod_container_resource_limits{namespace=\"monitoring\",resource=\"memory\",unit=\"byte\"}",
-              "legendFormat": "{{pod}}",
+              "expr": "(sum(container_memory_working_set_bytes{namespace=\"monitoring\",pod=~\"grafana.*|prometheus.*\",container!=\"\",image!=\"\"}) / sum(kube_pod_container_resource_limits{namespace=\"monitoring\",pod=~\"grafana.*|prometheus.*\",resource=\"memory\",unit=\"byte\"})) or vector(0)",
+              "legendFormat": "monitoring",
               "range": true,
               "refId": "A"
             }
