@@ -38,8 +38,22 @@ def ensure_bucket(bucket: str) -> None:
     client = object_store_client()
     try:
         client.head_bucket(Bucket=bucket)
-    except ClientError:
-        client.create_bucket(Bucket=bucket)
+        return
+    except ClientError as exc:
+        error = exc.response.get("Error", {})
+        code = str(error.get("Code", ""))
+        status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0)
+
+        # Only create the bucket when it is actually missing.
+        # S3/MinIO head_bucket can also return 400/403 for existing buckets,
+        # and treating those as "missing" causes create_bucket to fail and can
+        # break retraining uploads before the pipeline even starts training.
+        if code in {"404", "NoSuchBucket", "NotFound"} or status == 404:
+            client.create_bucket(Bucket=bucket)
+            return
+        if code in {"400", "403", "AccessDenied", "Forbidden"} or status in {400, 403}:
+            return
+        raise
 
 
 def upload_json(bucket: str, key: str, payload: Dict[str, Any]) -> None:
