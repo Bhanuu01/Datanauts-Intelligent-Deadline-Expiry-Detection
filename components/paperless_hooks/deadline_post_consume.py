@@ -37,6 +37,7 @@ ASYNC_ENABLED = os.getenv("DEADLINE_POST_CONSUME_ASYNC", "true").lower() in {"1"
 STATUS_REVIEW_TAG = "Status:Review Needed"
 FEEDBACK_CORRECT_TAG = "Action:Accept"
 FEEDBACK_WRONG_TAG = "Action:Reject"
+PRIMARY_DEADLINE_LABEL = "Deadline"
 EVENT_PRIORITY = {
     "deadline": 6,
     "expiration": 5,
@@ -177,10 +178,8 @@ def build_tags(result: Dict[str, Any]) -> List[str]:
         tags.append(STATUS_REVIEW_TAG)
 
     selected_events = dedupe_events_by_date(result.get("events", []))
-    primary_event = select_primary_event(selected_events)
-    if primary_event is not None:
-        primary_label = str(primary_event.get("event_type", "unknown")).strip().lower() or "unknown"
-        tags.append(f"Type:{primary_label.replace('_', ' ').title()}")
+    if selected_events:
+        tags.append(f"Type:{PRIMARY_DEADLINE_LABEL}")
 
     for event in selected_events:
         tags.extend(build_event_tags(event))
@@ -421,8 +420,7 @@ def normalize_deadline_date(raw_date: str) -> str:
 
 
 def build_event_tags(event: Dict[str, Any]) -> List[str]:
-    event_type = str(event.get("event_type", "unknown")).strip().lower() or "unknown"
-    event_label = event_type.replace("_", " ").title()
+    event_label = PRIMARY_DEADLINE_LABEL
     tags = []
 
     candidates = []
