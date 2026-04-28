@@ -3,6 +3,9 @@ import os
 import re
 import uuid
 import base64
+import time
+import urllib.parse
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -38,6 +41,16 @@ INGEST_LATENCY = Histogram(
     'online_features_ingest_latency_seconds',
     'Latency of ingest requests handled by the online feature service.',
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+FEEDBACK_EVENTS = Counter(
+    'online_features_feedback_events_total',
+    'Total number of feedback events captured by the online feature service for retraining.',
+    ['event'],
+)
+PAPERLESS_ACTION_FEEDBACK = Gauge(
+    'paperless_action_feedback_documents',
+    'Current number of Paperless documents tagged with action feedback.',
+    ['action'],
 )
 DATA_QUALITY_EP1_PASSED = Gauge(
     'data_quality_ep1_ingestion_passed',
@@ -105,6 +118,13 @@ DATA_QUALITY_EP3_EVENT_DRIFT.set(0.09)
 OBJECT_STORE_MIRROR_SUCCESS.set(0)
 INFERENCE_DOC_COUNT.set(0)
 INFERENCE_CANDIDATE_RATE.set(0)
+PAPERLESS_ACTION_FEEDBACK.labels(action='accept').set(0)
+PAPERLESS_ACTION_FEEDBACK.labels(action='reject').set(0)
+
+_PAPERLESS_ACTION_FEEDBACK_CACHE = {
+    'fetched_at': 0.0,
+    'counts': {'accept': 0, 'reject': 0},
+}
 
 r = redis.Redis(
     host=os.getenv('REDIS_HOST','redis'),
@@ -184,6 +204,61 @@ def upload_runtime_document(prefix_env: str, default_prefix: str, document_id: s
     upload_bytes(bucket, key, payload, content_type=content_type)
     OBJECT_STORE_MIRROR_SUCCESS.set(1)
     return {"bucket": bucket, "key": key}
+
+
+def paperless_auth_header():
+    password = os.getenv('PAPERLESS_ADMIN_PASSWORD')
+    if not password:
+        return None
+    username = os.getenv('PAPERLESS_ADMIN_USER', 'admin')
+    token = base64.b64encode(f'{username}:{password}'.encode('utf-8')).decode('ascii')
+    return f'Basic {token}'
+
+
+def fetch_paperless_tag_count(tag_name: str) -> int:
+    auth_header = paperless_auth_header()
+    if not auth_header:
+        return 0
+
+    base_url = os.getenv('PAPERLESS_API_URL', 'http://paperless-ngx.paperless.svc.cluster.local:8000').rstrip('/')
+    headers = {'Accept': 'application/json', 'Authorization': auth_header}
+
+    tag_query = urllib.parse.urlencode({'name__iexact': tag_name, 'page_size': 1})
+    tag_request = urllib.request.Request(f'{base_url}/api/tags/?{tag_query}', headers=headers, method='GET')
+    with urllib.request.urlopen(tag_request, timeout=10) as response:
+        tag_payload = json.loads(response.read().decode('utf-8'))
+
+    tag_results = tag_payload.get('results', [])
+    if not tag_results:
+        return 0
+
+    tag_id = tag_results[0]['id']
+    doc_query = urllib.parse.urlencode({'tags__id__all': tag_id, 'page_size': 1})
+    doc_request = urllib.request.Request(f'{base_url}/api/documents/?{doc_query}', headers=headers, method='GET')
+    with urllib.request.urlopen(doc_request, timeout=10) as response:
+        doc_payload = json.loads(response.read().decode('utf-8'))
+    return int(doc_payload.get('count', 0))
+
+
+def refresh_paperless_action_feedback_metrics(force: bool = False):
+    ttl_seconds = int(os.getenv('PAPERLESS_TAG_METRICS_TTL_SECONDS', '30'))
+    now = time.time()
+    if not force and now - _PAPERLESS_ACTION_FEEDBACK_CACHE['fetched_at'] < ttl_seconds:
+        return _PAPERLESS_ACTION_FEEDBACK_CACHE['counts']
+
+    counts = dict(_PAPERLESS_ACTION_FEEDBACK_CACHE['counts'])
+    try:
+        counts = {
+            'accept': fetch_paperless_tag_count('Action:Accept'),
+            'reject': fetch_paperless_tag_count('Action:Reject'),
+        }
+        PAPERLESS_ACTION_FEEDBACK.labels(action='accept').set(counts['accept'])
+        PAPERLESS_ACTION_FEEDBACK.labels(action='reject').set(counts['reject'])
+        _PAPERLESS_ACTION_FEEDBACK_CACHE['counts'] = counts
+        _PAPERLESS_ACTION_FEEDBACK_CACHE['fetched_at'] = now
+    except Exception:
+        pass
+    return counts
 
 def detect_section(s):
     for k, v in SECTIONS.items():
@@ -272,6 +347,9 @@ def health():
 def feedback(req: FeedbackRequest):
     payload = req.model_dump()
     payload['timestamp'] = payload['timestamp'] or datetime.utcnow().isoformat() + 'Z'
+    event_name = (payload.get('event') or 'unknown').strip().lower() or 'unknown'
+    payload['event'] = event_name
+    FEEDBACK_EVENTS.labels(event=event_name).inc()
     maybe_write_local_json('FEEDBACK_LOG_PATH', '/tmp/feedback_events.jsonl', payload)
     try:
         upload_runtime_event('FEEDBACK_S3_PREFIX', 'runtime/online-features/feedback', payload)
@@ -301,6 +379,7 @@ def archive_document(req: ArchiveDocumentRequest):
 
 @app.get('/metrics')
 def metrics():
+    refresh_paperless_action_feedback_metrics()
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 

@@ -2805,12 +2805,12 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(increase(deadline_onnx_user_corrections_total{job=\"kubernetes-pods\",app=~\"deadline-onnx-serving.*\"}[24h])) or vector(0)",
+              "expr": "sum(paperless_action_feedback_documents{job=\"kubernetes-pods\",app=\"online-features\",action=\"accept\"}) or vector(0)",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Serving Feedback Corrections (24h)",
+          "title": "Accepted in Paperless (current)",
           "type": "stat"
         },
         {
@@ -3077,6 +3077,58 @@ data:
             }
           ],
           "title": "Quality Monitoring Snapshot (gauge)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 24,
+            "x": 0,
+            "y": 21
+          },
+          "id": 10,
+          "options": {
+            "displayMode": "gradient",
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showUnfilled": true
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum(paperless_action_feedback_documents{job=\"kubernetes-pods\",app=\"online-features\",action=\"accept\"}) or vector(0)",
+              "legendFormat": "accept",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(paperless_action_feedback_documents{job=\"kubernetes-pods\",app=\"online-features\",action=\"reject\"}) or vector(0)",
+              "legendFormat": "reject",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Paperless Action Feedback (current)",
           "type": "bargauge"
         }
       ],
