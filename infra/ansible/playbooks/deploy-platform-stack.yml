@@ -6,6 +6,7 @@
   vars:
     rendered_root: "/tmp/datanauts-rendered-k8s"
     rendered_k8s_root: "{{ rendered_root }}/k8s"
+    image_registry_owner_lc: "{{ (image_registry_owner | default('bhanuu01')) | lower }}"
     rollout_deployments:
       - { namespace: "paperless", name: "postgres" }
       - { namespace: "paperless", name: "redis" }
@@ -80,6 +81,16 @@
         path: "{{ rendered_k8s_root }}/durable-pvs.yaml"
         regexp: "__CONTROL_PLANE_NODE_NAME__"
         replace: "{{ control_plane_node_name }}"
+
+    - name: Render configured GHCR owner in Kubernetes manifests
+      ansible.builtin.shell: |
+        set -euo pipefail
+        while IFS= read -r -d '' manifest; do
+          sed -i.bak "s#ghcr\\.io/bhanuu01/#ghcr.io/{{ image_registry_owner_lc }}/#g" "$manifest"
+          rm -f "${manifest}.bak"
+        done < <(find "{{ rendered_k8s_root }}" -type f \( -name '*.yaml' -o -name '*.yml' \) -print0)
+      args:
+        executable: /bin/bash
 
     - name: Create namespaces
       ansible.builtin.command:

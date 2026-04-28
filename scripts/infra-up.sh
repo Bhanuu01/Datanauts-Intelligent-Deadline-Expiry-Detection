@@ -5,6 +5,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TF_DIR="${REPO_ROOT}/infra/terraform/openstack"
 ANSIBLE_DIR="${REPO_ROOT}/infra/ansible"
 BOOTSTRAP_CONFIG_SCRIPT="${REPO_ROOT}/scripts/bootstrap-config.sh"
+IMAGE_REGISTRY_OWNER="${IMAGE_REGISTRY_OWNER:-${GHCR_USERNAME:-bhanuu01}}"
+IMAGE_REGISTRY_OWNER="${IMAGE_REGISTRY_OWNER,,}"
 
 tfvars_incomplete() {
   if [ ! -f "${TF_DIR}/terraform.tfvars" ]; then
@@ -68,7 +70,8 @@ ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook -i localhost, "${AN
   --extra-vars "repo_root=${REPO_ROOT}" \
   --extra-vars "kubeconfig_path=${KUBECONFIG_PATH}" \
   --extra-vars "control_plane_public_ip=${CONTROL_PLANE_PUBLIC_IP}" \
-  --extra-vars "control_plane_node_name=${CONTROL_PLANE_NODE_NAME}"
+  --extra-vars "control_plane_node_name=${CONTROL_PLANE_NODE_NAME}" \
+  --extra-vars "image_registry_owner=${IMAGE_REGISTRY_OWNER}"
 
 echo
 echo "Infrastructure, k3s bootstrap, and Kubernetes stack deployment completed."
