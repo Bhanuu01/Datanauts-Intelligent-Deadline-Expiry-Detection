@@ -9,7 +9,7 @@
       "title": "EP1 — Ingestion Quality Check (PASSED=1, FAILED=0)",
       "type": "stat",
       "gridPos": {"h": 4, "w": 8, "x": 0, "y": 0},
-      "targets": [{"expr": "data_quality_ep1_ingestion_passed", "legendFormat": "EP1 Ingestion"}],
+      "targets": [{"expr": "max(data_quality_ep1_ingestion_passed)", "legendFormat": "Ingestion Status"}],
       "options": {"colorMode": "background", "textMode": "auto"},
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "green", "value": 1}]}}}
     },
@@ -18,7 +18,7 @@
       "title": "EP2 — Training Set Quality (PASSED=1, FAILED=0)",
       "type": "stat",
       "gridPos": {"h": 4, "w": 8, "x": 8, "y": 0},
-      "targets": [{"expr": "data_quality_ep2_training_passed", "legendFormat": "EP2 Training"}],
+      "targets": [{"expr": "max(data_quality_ep2_training_passed)", "legendFormat": "Training Status"}],
       "options": {"colorMode": "background", "textMode": "auto"},
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "green", "value": 1}]}}}
     },
@@ -27,7 +27,7 @@
       "title": "EP3 — Drift Monitoring (PASSED=1, FAILED=0)",
       "type": "stat",
       "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
-      "targets": [{"expr": "data_quality_ep3_drift_passed", "legendFormat": "EP3 Drift"}],
+      "targets": [{"expr": "max(data_quality_ep3_drift_passed)", "legendFormat": "Drift Status"}],
       "options": {"colorMode": "background", "textMode": "auto"},
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "green", "value": 1}]}}}
     },
@@ -37,8 +37,8 @@
       "type": "bargauge",
       "gridPos": {"h": 5, "w": 8, "x": 0, "y": 4},
       "targets": [
-        {"expr": "data_quality_ep1_total_checks", "legendFormat": "Total Checks (12)"},
-        {"expr": "data_quality_ep1_failed_checks", "legendFormat": "Failed Checks (0)"}
+        {"expr": "max(data_quality_ep1_total_checks)", "legendFormat": "Total Checks"},
+        {"expr": "max(data_quality_ep1_failed_checks)", "legendFormat": "Failed Checks"}
       ],
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}]}}}
     },
@@ -48,9 +48,9 @@
       "type": "bargauge",
       "gridPos": {"h": 5, "w": 8, "x": 8, "y": 4},
       "targets": [
-        {"expr": "data_quality_ep2_train_records", "legendFormat": "Train (373)"},
-        {"expr": "data_quality_ep2_val_records", "legendFormat": "Validation (68)"},
-        {"expr": "data_quality_ep2_test_records", "legendFormat": "Test (69)"}
+        {"expr": "max(data_quality_ep2_train_records)", "legendFormat": "Train"},
+        {"expr": "max(data_quality_ep2_val_records)", "legendFormat": "Validation"},
+        {"expr": "max(data_quality_ep2_test_records)", "legendFormat": "Test"}
       ],
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": 0}]}}}
     },
@@ -59,7 +59,7 @@
       "title": "EP3 — OCR Length Drift Ratio (alert > 2.0)",
       "type": "gauge",
       "gridPos": {"h": 5, "w": 4, "x": 16, "y": 4},
-      "targets": [{"expr": "data_quality_ep3_drift_ratio", "legendFormat": "Drift Ratio"}],
+      "targets": [{"expr": "max(data_quality_ep3_drift_ratio)", "legendFormat": "Drift Ratio"}],
       "fieldConfig": {"defaults": {"min": 0, "max": 3, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "yellow", "value": 1.5}, {"color": "red", "value": 2.0}]}}}
     },
     {
@@ -67,7 +67,7 @@
       "title": "EP3 — Event Type Drift (alert > 0.4)",
       "type": "gauge",
       "gridPos": {"h": 5, "w": 4, "x": 20, "y": 4},
-      "targets": [{"expr": "data_quality_ep3_event_type_drift", "legendFormat": "Event Drift"}],
+      "targets": [{"expr": "max(data_quality_ep3_event_type_drift)", "legendFormat": "Event Drift"}],
       "fieldConfig": {"defaults": {"min": 0, "max": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "yellow", "value": 0.3}, {"color": "red", "value": 0.4}]}}}
     },
     {
@@ -84,15 +84,15 @@
       "title": "Live Inference — Date Candidate Rate",
       "type": "gauge",
       "gridPos": {"h": 4, "w": 6, "x": 6, "y": 9},
-      "targets": [{"expr": "data_inference_candidate_rate", "legendFormat": "Candidate Rate"}],
+      "targets": [{"expr": "max(data_inference_candidate_rate)", "legendFormat": "Candidate Rate"}],
       "fieldConfig": {"defaults": {"min": 0, "max": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "yellow", "value": 0.1}, {"color": "green", "value": 0.3}]}}}
     },
     {
       "id": 10,
-      "title": "Chameleon Bucket Mirror Status (1=OK, 0=Failed)",
+      "title": "Chameleon Bucket (object_storage_proj11)",
       "type": "stat",
       "gridPos": {"h": 4, "w": 6, "x": 12, "y": 9},
-      "targets": [{"expr": "data_chameleon_mirror_success", "legendFormat": "cuad-data-proj11-v2"}],
+      "targets": [{"expr": "max(data_chameleon_mirror_success)", "legendFormat": "Mirror Status"}],
       "options": {"colorMode": "background"},
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "green", "value": 1}]}}}
     },
@@ -101,7 +101,7 @@
       "title": "Redis Errors",
       "type": "stat",
       "gridPos": {"h": 4, "w": 6, "x": 18, "y": 9},
-      "targets": [{"expr": "online_features_redis_errors_total", "legendFormat": "Redis Errors"}],
+      "targets": [{"expr": "max(online_features_redis_errors_total)", "legendFormat": "Redis Errors"}],
       "options": {"colorMode": "background", "textMode": "auto", "reduceOptions": {"calcs": ["lastNotNull"]}},
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "red", "value": 1}]}}}
     },
@@ -110,7 +110,7 @@
       "title": "Ingest Request Rate (req/sec)",
       "type": "timeseries",
       "gridPos": {"h": 6, "w": 12, "x": 0, "y": 13},
-      "targets": [{"expr": "rate(online_features_ingest_requests_total[5m])", "legendFormat": "Requests/sec"}],
+      "targets": [{"expr": "sum(rate(online_features_ingest_requests_total{app=\"online-features\"}[5m])) or vector(0)", "legendFormat": "Requests/sec"}],
       "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "green"}, "custom": {"lineWidth": 2, "fillOpacity": 10, "showPoints": "always", "pointSize": 5}}}
     },
     {
@@ -119,9 +119,9 @@
       "type": "timeseries",
       "gridPos": {"h": 6, "w": 12, "x": 12, "y": 13},
       "targets": [
-        {"expr": "histogram_quantile(0.50, rate(online_features_ingest_latency_seconds_bucket[5m]))", "legendFormat": "p50"},
-        {"expr": "histogram_quantile(0.95, rate(online_features_ingest_latency_seconds_bucket[5m]))", "legendFormat": "p95"},
-        {"expr": "histogram_quantile(0.99, rate(online_features_ingest_latency_seconds_bucket[5m]))", "legendFormat": "p99"}
+        {"expr": "histogram_quantile(0.50, sum by (le) (rate(online_features_ingest_latency_seconds_bucket{app=\"online-features\"}[5m]))) or vector(0)", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(online_features_ingest_latency_seconds_bucket{app=\"online-features\"}[5m]))) or vector(0)", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(online_features_ingest_latency_seconds_bucket{app=\"online-features\"}[5m]))) or vector(0)", "legendFormat": "p99"}
       ],
       "fieldConfig": {"defaults": {"custom": {"lineWidth": 2, "fillOpacity": 5, "showPoints": "always", "pointSize": 5}}}
     }
