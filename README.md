@@ -1,165 +1,215 @@
 # Datanauts Intelligent Deadline Detection
 
-Integrated MLOps system for deadline detection inside Paperless-ngx, deployed on Kubernetes on Chameleon.
+Datanauts is an integrated MLOps system that adds deadline detection to
+Paperless-ngx and runs the full ML lifecycle on Chameleon.
 
-This branch, `devops/final-hardening`, is the current demo-ready branch used for the integrated system, monitoring fixes, secret handling updates, and Paperless deadline-tag flow.
+The system combines:
 
-## Overview
+- a user-facing document workflow in Paperless-ngx
+- an online feature service for ingest and feedback capture
+- ONNX-based inference for low-latency serving
+- MLflow for experiment tracking and model registry
+- MinIO for artifact and runtime object storage
+- automated retraining, gating, and release promotion jobs
+- Grafana and Prometheus for monitoring
 
-The system adds an ML-powered deadline feature directly into the normal Paperless-ngx workflow.
+This README is the primary operator guide for:
 
-When a document is ingested:
+- infrastructure bring-up
+- Kubernetes deployment
+- system architecture
+- end-to-end data flow
+- training and retraining behavior
+- day-2 operations
+- teammate responsibilities
 
-1. Paperless OCR/parsing runs.
-2. A Paperless post-consume hook sends OCR text to the ONNX serving service.
-3. ONNX serving returns deadline-related events and extracted date candidates.
-4. The hook writes prediction artifacts to Paperless storage.
-5. Paperless updates the document with ML-generated tags.
-6. Feedback is captured with Paperless tags and logged for retraining.
-7. Retraining, gating, and release automation run as Kubernetes jobs and cronjobs.
+## 1. What This Repository Deploys
 
-## What You Should See In Paperless
+At a high level, this repository brings up a Chameleon-hosted Kubernetes
+deployment with these major layers:
 
-For positive examples, Paperless should add tags such as:
+- `paperless`: Paperless-ngx, Postgres, Redis
+- `platform`: MLflow, MinIO, MLflow Postgres
+- `ml`: online-features, data-generator, ONNX serving, retraining cronjobs
+- `monitoring`: Prometheus, Grafana, kube-state-metrics
+- `release`: staging, canary, and production inference deployments
 
-- `Type:Deadline`
-- `Deadline:YYYY-MM-DD`
-- `Type:Effective`
-- `Effective:YYYY-MM-DD`
-- `Type:Renewal`
-- `Status:Review Needed`
-
-Reviewer feedback is captured with:
-
-- `Action:Accept`
-- `Action:Reject`
-
-If a document repeats multiple notice blocks, you may see multiple `Deadline:*` and `Effective:*` tags on the same document. That is expected behavior.
-
-## Repository Layout
+## 2. Repository Layout
 
 ```text
 components/
+  common/                      Shared object-store helpers
   data/
-    data_generator/            Synthetic production traffic generator
-    evaluation_monitoring/     Data quality and drift jobs
-    online_features/           Ingest + feedback capture service
+    data_generator/            Synthetic traffic generator
+    evaluation_monitoring/     Drift and data-quality jobs
+    online_features/           Ingest and feedback capture service
   paperless_hooks/             Paperless post-consume integration
-  platform_automation/         Retrain, evaluation, promotion, release scripts
-  serving/                     ONNX serving runtime and export/quantization helpers
-  training/                    Training code for classifier and NER models
+  platform_automation/         Retrain, evaluate, promote, release scripts
+  serving/                     ONNX inference runtime
+  training/                    NER and classifier training code
+
+infra/
+  terraform/openstack/         Chameleon / OpenStack provisioning
+  ansible/                     k3s bootstrap and cluster deployment
 
 k8s/
-  paperless/                   Paperless, Postgres, Redis
-  platform/                    MLflow, MinIO, MLflow Postgres
-  ml/                          ONNX serving, online-features, data generator, cronjobs
-  monitoring/                  Prometheus, Grafana, kube-state-metrics
-  release/                     Staging / canary / production serving layer
-  sealed-secrets/              Optional sealed-secret manifests
+  paperless/                   Paperless application manifests
+  platform/                    MLflow and MinIO manifests
+  ml/                          ML services and CronJobs
+  monitoring/                  Prometheus and Grafana manifests
+  release/                     staged inference deployments
+  sealed-secrets/              optional sealed-secret manifests
 
 scripts/
-  bootstrap-production.sh      One-shot fresh-instance production bootstrap
-  provision.sh                 Wrapper around bootstrap-production.sh
-  create-secrets.sh            Secret creation
-  sync-runtime-secrets.sh      Mirrors runtime secrets into ml namespace
-  sync-public-endpoints.sh     Syncs the current public IP into runtime config
-  rebuild-k3s-images.sh        Build and import local images into k3s
-  chameleon-health-check.sh    Cluster sanity check
-  demo-readiness-check.sh      Demo validation helper
-  demo-links.sh                Prints public URLs
-  latest-job-log.sh            Prints newest matching job log
+  infra-up.sh                  full infra + k3s + stack bring-up
+  bootstrap-production.sh      single-node bootstrap on an existing VM
+  deploy-existing-cluster.sh   deploy repo onto an already-running cluster
+  create-secrets.sh            create and mirror runtime secrets
+  sync-public-endpoints.sh     inject public host/IP into runtime config
+  rebuild-k3s-images.sh        build and import custom images into k3s
+  demo-links.sh                print public URLs
+  demo-readiness-check.sh      quick end-to-end readiness checks
 ```
 
-## Branches
+## 3. Recommended Bring-Up Paths
 
-- `devops/final-hardening`: current demo/integration branch
-- `main`: stable integrated baseline
-- `paperless-ngx-import`: imported upstream Paperless snapshot
+There are two supported ways to bring this system up.
 
-If you want the current demo behavior, use `devops/final-hardening`.
+### Path A: Full Chameleon Infrastructure Bring-Up
 
-## Prerequisites
+Use this when you want the repository to provision the Chameleon/OpenStack
+instances and then bootstrap Kubernetes on them.
 
-Recommended target environment:
+This is the preferred path for a fresh environment.
 
-- Ubuntu VM on Chameleon
-- single-node `k3s`
-- Docker available on the node
-- enough disk space for local image builds and imported model artifacts
+### Path B: Bootstrap on an Existing VM or Existing Cluster
 
-Practical baseline:
+Use this when:
 
-- 1 node
-- 48 vCPU
-- 240 GiB RAM
-- at least 40 GiB free root disk before rebuilding images
+- you already have a Chameleon VM
+- you already have a running k3s cluster
+- you want to re-deploy the repo without reprovisioning instances
 
-## Quick Start
+This is the faster path for iterative demo/debug work.
 
-### 1. Clone and check out the branch
+## 4. Path A: Full Infrastructure Bring-Up on Chameleon
+
+### 4.1. Prerequisites
+
+You need:
+
+- a Chameleon project
+- active Chameleon leases / reservations
+- an OpenStack `openrc` file or equivalent `OS_*` credentials
+- `terraform`
+- `ansible-playbook`
+- `ssh`
+
+You must also know or fill in the required values in:
+
+- `infra/terraform/openstack/terraform.tfvars`
+
+Important expected inputs include:
+
+- network and subnet IDs
+- Chameleon image name
+- SSH keypair name
+- private key path
+- reservation IDs / leased flavor IDs
+- optional object storage container name for bootstrap artifacts
+
+### 4.2. One-Command Infra Bring-Up
 
 ```bash
-git clone https://github.com/Bhanuu01/Datanauts-Intelligent-Deadline-Expiry-Detection.git
-cd Datanauts-Intelligent-Deadline-Expiry-Detection
-git checkout devops/final-hardening
+source <your-openrc-file>
+cp infra/terraform/openstack/terraform.tfvars.example infra/terraform/openstack/terraform.tfvars
+./scripts/infra-up.sh
 ```
 
-### 2. One-shot bootstrap
+What `scripts/infra-up.sh` does:
 
-On a fresh instance, this is the fastest path:
+1. validates Terraform variables
+2. runs Terraform in `infra/terraform/openstack`
+3. provisions the control-plane and worker nodes
+4. provisions attached durable block volumes
+5. assigns floating IPs
+6. generates an Ansible inventory from Terraform outputs
+7. bootstraps `k3s` with Ansible
+8. fetches a ready-to-use kubeconfig
+9. deploys the full Kubernetes stack
+
+### 4.3. Infra Layer Responsibilities
+
+Terraform provisions:
+
+- one control-plane node
+- one worker node
+- durable block volumes for persistent data
+- network ports
+- security group
+- router and floating IPs
+- bootstrap object-storage container name
+
+Ansible then:
+
+- installs `k3s`
+- joins the worker node
+- prepares persistent mount points
+- applies Kubernetes manifests
+- waits for rollouts
+
+Relevant files:
+
+- `infra/terraform/openstack/README.md`
+- `infra/ansible/README.md`
+- `scripts/infra-up.sh`
+
+## 5. Path B: Bring Up on an Existing VM or Existing Cluster
+
+### 5.1. Single-Node Existing VM
+
+If you already have a VM and want this repo to bootstrap k3s and deploy the
+stack directly:
 
 ```bash
 bash scripts/bootstrap-production.sh <PUBLIC_IP>
 ```
 
-This script will:
+`scripts/bootstrap-production.sh` will:
 
 - install `k3s` if needed
-- configure `kubectl`
-- disable host firewalls that break K3s pod networking
-- create secrets and mirrored runtime copies
-- sync the current public IP into runtime config
-- build and import local images into `k3s`
-- deploy Paperless, MLflow, MinIO, Prometheus, Grafana, serving, and release manifests
-- create the MinIO `mlflow` bucket
-- seed baseline train/test data into the shared PVC
-- seed local base models / quantized ONNX models if present under `models/`
-- otherwise download bootstrap train/test/model artifacts from Chameleon object storage
+- configure kubeconfig
+- optionally disable host firewalls that break pod networking
+- create namespaces
+- create and mirror secrets
+- sync the public host/IP into manifests
+- build and import custom images into k3s
+- apply Paperless, platform, monitoring, ML, and release manifests
+- bootstrap MinIO
+- optionally seed model/data artifacts
 
-If you want a new instance to be fully self-bootstrapping, publish the current artifacts first:
+### 5.2. Existing Multi-Node k3s Cluster
 
-```bash
-bash scripts/publish-bootstrap-artifacts.sh
-```
-
-By default the bootstrap downloader reads from:
-
-```text
-https://chi.tacc.chameleoncloud.org/project/containers/container/cuad-data-proj11-v2/bootstrap
-```
-
-Override that with `BOOTSTRAP_OBJECT_BASE_URL` if you use a different bucket or prefix.
-
-### 3. Manual install path
-
-If you want to do it step by step instead:
+If the cluster already exists and you only want to deploy the repo:
 
 ```bash
-curl -sfL https://get.k3s.io | sh -
-mkdir -p ~/.kube
-sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-sudo chown "$(id -u)":"$(id -g)" ~/.kube/config
-export KUBECONFIG=~/.kube/config
-echo 'export KUBECONFIG=~/.kube/config' >> ~/.zshrc
+export KUBECONFIG=<path-to-kubeconfig>
+export CONTROL_PLANE_PUBLIC_IP=<public-ip>
+export CONTROL_PLANE_NODE_NAME=<node-name>
+bash scripts/deploy-existing-cluster.sh
 ```
 
-Verify:
+This path:
 
-```bash
-kubectl get nodes
-```
+- renders manifests with the correct public IP and node name
+- refreshes secrets
+- applies the stack
+- restarts image-based workloads
+- waits for rollout completion
 
-### 4. Create secrets
+## 6. Secrets and Credentials
+
+Create secrets with:
 
 ```bash
 bash scripts/create-secrets.sh
@@ -172,82 +222,7 @@ This creates:
 - `monitoring-secrets` in `monitoring`
 - mirrored runtime copies in `ml`
 
-Optional:
-
-```bash
-SAVE_CREDENTIALS_FILE=~/datanauts-secrets.env bash scripts/create-secrets.sh
-```
-
-If you use Sealed Secrets:
-
-```bash
-kubectl apply -k k8s/sealed-secrets/
-USE_EXISTING_SOURCE_SECRETS=true bash scripts/create-secrets.sh
-```
-
-### 5. Build and import local images
-
-Build all custom images:
-
-```bash
-./scripts/rebuild-k3s-images.sh
-```
-
-Build only one family:
-
-```bash
-./scripts/rebuild-k3s-images.sh onnx-serving
-./scripts/rebuild-k3s-images.sh platform-automation
-./scripts/rebuild-k3s-images.sh data-monitoring
-```
-
-Custom images used by this deployment include:
-
-- `ghcr.io/bhanuu01/datanauts-online-features:latest`
-- `ghcr.io/bhanuu01/datanauts-data-generator:latest`
-- `ghcr.io/bhanuu01/datanauts-data-monitoring:latest`
-- `ghcr.io/bhanuu01/datanauts-platform-automation:latest`
-- `ghcr.io/bhanuu01/datanauts-onnx-serving:latest`
-
-### 6. Deploy the stack
-
-```bash
-kubectl apply -f k8s/paperless/
-kubectl apply -f k8s/platform/
-kubectl apply -k k8s/monitoring
-kubectl apply -k k8s/ml
-kubectl apply -k k8s/release
-```
-
-### 7. Verify deployments
-
-```bash
-kubectl rollout status deployment/paperless-ngx -n paperless --timeout=300s
-kubectl rollout status deployment/mlflow -n platform --timeout=300s
-kubectl rollout status deployment/minio -n platform --timeout=300s
-kubectl rollout status deployment/grafana -n monitoring --timeout=300s
-kubectl rollout status deployment/prometheus -n monitoring --timeout=300s
-kubectl rollout status deployment/online-features -n ml --timeout=300s
-kubectl rollout status deployment/deadline-onnx-serving -n ml --timeout=300s
-```
-
-## Public URLs
-
-Public URLs are served from the current node IP:
-
-- Paperless: `http://<NODE_IP>`
-- MLflow: `http://<NODE_IP>/mlflow/`
-- MinIO Console: `http://<NODE_IP>:30901`
-- MinIO S3 API: `http://<NODE_IP>:30900`
-- Grafana: `http://<NODE_IP>/grafana/login`
-- Prometheus: `http://<NODE_IP>/prometheus/graph`
-
-For this single-node K3s deployment, Grafana, Prometheus, and Paperless derive
-their public host dynamically from the node they are running on.
-
-## Credentials
-
-Do not store credentials in documentation. Read them from Kubernetes secrets.
+To print credentials later:
 
 ### Paperless
 
@@ -270,31 +245,276 @@ echo mlflow
 kubectl get secret -n platform platform-secrets -o jsonpath='{.data.MINIO_ROOT_PASSWORD}' | base64 --decode && echo
 ```
 
-### MLflow and Prometheus
+## 7. Public Endpoints
 
-In this deployment, MLflow and Prometheus are normally shown without separate login credentials.
+The system exposes these public URLs:
 
-## Internal Service Endpoints
+- Paperless: `http://<PUBLIC_HOST>`
+- MLflow: `http://<PUBLIC_HOST>/mlflow/`
+- Grafana: `http://<PUBLIC_HOST>/grafana/login`
+- Prometheus: `http://<PUBLIC_HOST>/prometheus/graph`
+- MinIO Console: `http://<PUBLIC_HOST>:30901`
+- MinIO S3 API: `http://<PUBLIC_HOST>:30900`
 
-Inside the cluster:
+To print the live links from the repo:
 
-- Paperless API: `http://paperless-ngx.paperless.svc.cluster.local:8000`
-- Online features: `http://online-features.ml.svc.cluster.local:8000`
-- ONNX serving: `http://deadline-onnx-serving.ml.svc.cluster.local:8004`
-- MLflow: `http://mlflow.platform.svc.cluster.local:5000`
-- MinIO: `http://minio.platform.svc.cluster.local:9000`
-- Prometheus: `http://prometheus.monitoring.svc.cluster.local:9090/prometheus`
+```bash
+bash scripts/demo-links.sh
+```
 
-## Daily Operations
+## 8. Architecture Overview
 
-### Cluster health
+```mermaid
+flowchart LR
+    User["User in Paperless UI"] --> Paperless["Paperless-ngx"]
+    Paperless --> Hook["Post-consume hook"]
+    Hook --> OF["online-features /ingest"]
+    Hook --> Serving["ONNX serving /predict"]
+    Hook --> FB["online-features /feedback"]
+
+    OF --> Redis["Redis feature cache"]
+    OF --> RuntimeBucket["MinIO / object storage<br/>runtime logs"]
+    Serving --> RuntimeBucket
+    FB --> RuntimeBucket
+
+    RuntimeBucket --> Retrain["Retrain pipeline CronJob"]
+    Retrain --> TrainNER["NER training"]
+    Retrain --> TrainCLF["Classifier training"]
+    TrainNER --> MLflow["MLflow + Model Registry"]
+    TrainCLF --> MLflow
+    Retrain --> Eval["Evaluation + quality gates"]
+    Eval --> Release["Release promotion"]
+    Release --> Bundle["Promoted ONNX bundle in object storage"]
+    Bundle --> Serving
+
+    Prom["Prometheus"] --> Graf["Grafana dashboards"]
+    OF --> Prom
+    Serving --> Prom
+    Paperless --> Prom
+```
+
+## 9. End-to-End Product Behavior
+
+When a user uploads a document in Paperless:
+
+1. Paperless OCR/parsing runs.
+2. The post-consume hook reads the OCR text.
+3. The hook sends the text to `online-features /ingest`.
+4. The hook sends the text to ONNX inference at `/predict`.
+5. ONNX serving returns predicted deadline events and confidence.
+6. The hook writes prediction artifacts under Paperless storage.
+7. The hook updates the Paperless document with ML-generated tags.
+8. If the prediction is uncertain, the hook adds `Status:Review Needed`.
+9. User review actions such as `Action:Accept` and `Action:Reject` become
+   signals for monitoring and retraining.
+
+Expected Paperless tags include:
+
+- `Type:Deadline`
+- `Deadline:YYYY-MM-DD`
+- `Status:Review Needed`
+- `Action:Accept`
+- `Action:Reject`
+
+## 10. Data Flow
+
+### 10.1. Online Ingest Flow
+
+`components/data/online_features/feature_service.py`
+
+The online-features service:
+
+- accepts OCR text through `/ingest`
+- splits the document into sentences
+- finds candidate sentences with date-like patterns
+- stores extracted features in Redis
+- appends runtime ingest logs
+- mirrors ingest payloads to object storage
+
+The main online runtime log prefix is:
+
+- `runtime/online-features/ingest`
+
+### 10.2. Feedback Flow
+
+Feedback comes from two places:
+
+- Paperless review interactions
+- serving-side feedback endpoints
+
+The repository stores runtime feedback under:
+
+- `runtime/online-features/feedback`
+- `runtime/serving/feedback`
+
+These logs are the shared input to retraining.
+
+### 10.3. Artifact and State Persistence
+
+Persistent system state is split across:
+
+- MinIO object storage
+- MLflow Postgres metadata
+- Kubernetes PVC-backed services for Paperless, MLflow DB, and monitoring
+
+Important object-storage content includes:
+
+- runtime ingest logs
+- runtime feedback logs
+- retrain decisions
+- promotion decisions
+- release bundles
+- model artifacts logged through MLflow
+
+## 11. Training and Retraining
+
+### 11.1. Model Types
+
+This system uses two learned components:
+
+- NER model for extracting deadline-related spans
+- classifier model for predicting the event type
+
+The training code lives in:
+
+- `components/training/src/train_ner.py`
+- `components/training/src/train_classifier.py`
+
+### 11.2. Tracking
+
+Training runs are tracked in MLflow experiments:
+
+- `deadline-detection-ner`
+- `deadline-detection-classifier`
+- `deadline-detection-e2e`
+- `deadline-detection-cross-domain`
+
+Registered models are kept under stable names:
+
+- `deadline-ner`
+- `deadline-classifier`
+
+### 11.3. Retraining Trigger
+
+Retraining is run by the `retrain-pipeline` CronJob in `k8s/ml/`.
+
+The retrain loop checks:
+
+- new feedback volume
+- correction rate
+- Paperless tag counts for `Action:Accept` and `Action:Reject`
+
+The main orchestration is in:
+
+- `components/platform_automation/run_retrain_cycle.py`
+
+### 11.4. Retraining Data Preparation
+
+Retraining does not just reuse a static dataset. It compiles additions from live
+feedback.
+
+`components/platform_automation/feedback_curation.py`:
+
+- loads online feedback records
+- loads serving feedback records
+- loads ingest records
+- filters for retraining-usable events
+- writes classifier and NER training additions
+
+### 11.5. Candidate Selection
+
+Retraining can evaluate multiple configured model pairs.
+
+The live path currently uses configured candidate pairs instead of live Ray Tune
+sweeps.
+
+For each candidate pair, the pipeline:
+
+1. trains NER
+2. trains classifier
+3. exports ONNX
+4. quantizes ONNX
+5. evaluates the pair
+6. applies quality gates
+7. registers eligible winners in MLflow
+8. packages a serving bundle for promotion
+
+### 11.6. Release Promotion
+
+Serving does not pull the “latest MLflow run” automatically.
+
+Instead:
+
+- retraining produces a bundle
+- promotion jobs decide whether it is acceptable
+- release automation updates the serving deployment to point to the promoted
+  bundle in object storage
+
+Main files:
+
+- `components/platform_automation/evaluate_and_promote.py`
+- `components/platform_automation/promote_release.py`
+- `components/serving/app_onnx_quant.py`
+
+## 12. Serving Behavior
+
+The main inference runtime is ONNX-based for lower-latency serving.
+
+The serving layer includes:
+
+- base inference deployment
+- staging deployment
+- canary deployment
+- production deployment
+
+The serving runtime:
+
+- loads the current promoted ONNX bundle
+- exposes `/predict`
+- emits latency, confidence, and uncertainty metrics
+- can log feedback for retraining
+
+## 13. Monitoring and Dashboards
+
+Prometheus scrapes:
+
+- Paperless-related services
+- online-features
+- ONNX serving
+- cluster health
+- deployment health
+
+Grafana dashboards live in:
+
+- `k8s/monitoring/grafana-dashboards-configmap.yaml`
+
+Important dashboards include:
+
+- Datanauts Overview
+- Datanauts Serving
+- Datanauts Data & Feedback
+- Datanauts Platform Health
+- Datanauts Training & Retraining
+
+Use Grafana for:
+
+- p95 latency
+- confidence trends
+- review-needed rate
+- accept/reject counts
+- data-quality gauge snapshots
+- infrastructure health
+
+## 14. Day-2 Operations
+
+### 14.1. Health checks
 
 ```bash
 export KUBECONFIG=~/.kube/config
 bash scripts/chameleon-health-check.sh
 ```
 
-### Pod status
+### 14.2. Pod status
 
 ```bash
 kubectl get pods -n paperless
@@ -303,115 +523,15 @@ kubectl get pods -n monitoring
 kubectl get pods -n ml
 ```
 
-### Service logs
+### 14.3. Logs
 
 ```bash
 kubectl logs -n paperless deploy/paperless-ngx --tail=150
-kubectl logs -n ml deploy/deadline-onnx-serving --tail=100
-kubectl logs -n ml deploy/online-features --tail=100
-kubectl logs -n ml deploy/data-generator --tail=50
+kubectl logs -n ml deploy/online-features --tail=150
+kubectl logs -n ml deploy/deadline-onnx-serving --tail=150
 ```
 
-## Using the Product
-
-### Upload a document in Paperless
-
-1. Open Paperless.
-2. Upload a `.txt` or `.pdf`.
-3. Wait for Paperless processing to complete.
-4. Open the document details page.
-5. Inspect generated tags.
-
-Expected tags on a positive example:
-
-- `Type:Deadline`
-- `Deadline:YYYY-MM-DD`
-- `Type:Effective`
-- `Effective:YYYY-MM-DD`
-- `Status:Review Needed`
-
-Feedback tags available in Paperless:
-
-- `Action:Accept`
-- `Action:Reject`
-
-### Result artifacts inside Paperless
-
-```bash
-kubectl exec -n paperless deploy/paperless-ngx -- sh -c 'ls -lah /usr/src/paperless/data/deadline-results'
-```
-
-Inspect a result:
-
-```bash
-kubectl exec -n paperless deploy/paperless-ngx -- sh -c 'cat /usr/src/paperless/data/deadline-results/<document-id>.json'
-```
-
-### Production data and feedback logs
-
-```bash
-kubectl exec -n ml deploy/online-features -- sh -c 'tail -n 20 /data/production_ingest.jsonl'
-kubectl exec -n ml deploy/online-features -- sh -c 'tail -n 20 /data/feedback_events.jsonl'
-```
-
-## Direct Service Testing
-
-### ONNX serving
-
-```bash
-kubectl port-forward -n ml svc/deadline-onnx-serving 18005:8004
-```
-
-Then:
-
-```bash
-curl -X POST http://127.0.0.1:18005/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "document_id": "demo-1",
-    "ocr_text": "This agreement is effective as of September 22, 2029. Written notice must be delivered by May 25, 2029.",
-    "document_type": "contract",
-    "filename": "demo.txt"
-  }'
-```
-
-### Online-features feedback
-
-```bash
-kubectl port-forward -n ml svc/online-features 18000:8000
-```
-
-Then:
-
-```bash
-curl -X POST http://127.0.0.1:18000/feedback \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event": "confirm",
-    "document_id": "demo-1",
-    "event_type": "effective",
-    "confidence": 0.9
-  }'
-```
-
-## Retraining, Promotion, and Release
-
-CronJobs:
-
-- `retrain-pipeline`
-- `model-promotion-gate`
-- `release-promotion`
-- `data-quality-checks`
-- `drift-monitor`
-
-List them:
-
-```bash
-kubectl get cronjobs -n ml
-kubectl get jobs -n ml
-```
-
-Manual reruns:
+### 14.4. Trigger jobs manually
 
 ```bash
 kubectl create job --from=cronjob/retrain-pipeline retrain-manual -n ml
@@ -419,121 +539,158 @@ kubectl create job --from=cronjob/model-promotion-gate model-promotion-manual -n
 kubectl create job --from=cronjob/release-promotion release-promotion-manual -n ml
 ```
 
-Inspect the latest matching job with helper scripts:
+### 14.5. Check latest matching job logs
 
 ```bash
 ./scripts/latest-job-log.sh ml retrain 120
-./scripts/latest-job-log.sh ml drift-monitor 60
 ./scripts/latest-job-log.sh ml data-quality 60
+./scripts/latest-job-log.sh ml drift-monitor 60
 ```
 
-Decision artifacts:
+## 15. Teammate Responsibilities
 
-```bash
-kubectl exec -n ml deploy/online-features -- sh -c 'cat /data/retrain_decision.json && echo --- && cat /data/promotion_decision.json'
-```
+### Data
 
-## Monitoring
+Primary areas:
 
-### Grafana dashboards
+- `components/data/online_features/`
+- `components/data/evaluation_monitoring/`
 
-Main dashboards:
+Responsible for:
 
-- `Datanauts Overview`
-- `Datanauts Serving`
-- `Datanauts Data & Feedback`
-- `Datanauts Platform Health`
+- runtime ingest capture
+- feedback capture
+- data-quality checks
+- drift monitoring
+- training-data curation inputs
 
-Typical useful panels:
+Questions the data owner should be able to answer:
 
-- serving targets up
-- ONNX predictions/sec
-- feedback / review activity
-- ingest throughput
-- platform memory utilization
-- monitoring health
+- what data enters the system?
+- where is it stored?
+- how is live data turned into retraining data?
+- how do we detect drift or low-quality samples?
 
-### Prometheus
+### Training
 
-Useful pages:
+Primary areas:
 
-- Targets
-- Alerts
-- Graph
+- `components/training/`
+- `components/platform_automation/run_retrain_cycle.py`
+- `components/platform_automation/feedback_curation.py`
 
-Useful queries:
+Responsible for:
 
-```promql
-up
-deadline_onnx_predictions_total
-online_features_ingest_requests_total
-sum(kube_deployment_status_replicas_unavailable{namespace=~"paperless|platform|monitoring|ml"})
-```
+- model training code
+- candidate definitions
+- evaluation logic
+- quality gates
+- MLflow tracking and registration
 
-## Demo Prep
+Questions the training owner should be able to answer:
 
-Before a live demo:
+- where does retraining data come from?
+- where are model artifacts stored?
+- how are candidates selected?
+- how do quality gates work?
 
-```bash
-export KUBECONFIG=~/.kube/config
-./scripts/demo-readiness-check.sh
-./scripts/demo-links.sh
-```
+### Serving
 
-Recommended checks:
+Primary areas:
 
-1. Verify all core deployments are available.
-2. Confirm Grafana and Prometheus load.
-3. Confirm Paperless login works.
-4. Upload one known-good positive document.
-5. Confirm Paperless tags include `Deadline:*` and `Effective:*`.
-6. Confirm feedback logs and production ingest logs update.
+- `components/serving/`
+- `k8s/release/`
 
-## Notes
+Responsible for:
 
-- The UI review flow uses Paperless tags, not custom accept/reject buttons.
-- Date extraction is strongest on contract-style text and supported date formats.
-- If you rebuild serving or platform-automation images, re-import them into k3s with `./scripts/rebuild-k3s-images.sh`.
+- inference behavior
+- latency and confidence monitoring
+- promoted model bundle loading
+- staged deployment behavior
 
-Rebuild and re-import:
+Questions the serving owner should be able to answer:
 
-```bash
-./scripts/rebuild-k3s-images.sh
-```
+- how does serving pick the model?
+- what bundle is currently in production?
+- what happens under uncertainty?
+- what latency/confidence do users see?
 
-Then restart the affected deployment:
+### DevOps / Platform
 
-```bash
-kubectl rollout restart deployment/deadline-onnx-serving -n ml
-kubectl rollout restart deployment/online-features -n ml
-kubectl rollout restart deployment/paperless-ngx -n paperless
-```
+Primary areas:
 
-### Disk pressure on the node
+- `infra/`
+- `k8s/`
+- `scripts/`
+- `k8s/monitoring/`
 
-Check disk:
+Responsible for:
 
-```bash
-df -h /
-```
+- instance provisioning
+- cluster bootstrap
+- secrets
+- durable storage
+- stack deployment
+- monitoring and rollout health
 
-This system depends on local image builds. If the root disk fills up, pods can be evicted and local images can disappear from k3s.
+Questions the DevOps owner should be able to answer:
 
-## Quick Demo Checklist
+- how is the cluster brought up?
+- which manifests deploy which services?
+- where is persistence provided?
+- how are public endpoints wired?
 
-1. Show `kubectl get pods` for all namespaces.
-2. Open Paperless and upload a document.
-3. Show ML tags on the Paperless document.
-4. Add `ML Feedback Correct` or `ML Feedback Wrong`.
-5. Show `/data/production_ingest.jsonl` and `/data/feedback_events.jsonl`.
-6. Show retrain/promotion CronJobs and decision files.
-7. Show Grafana `Datanauts Overview`.
-8. Show Prometheus targets or alerts.
+## 16. Demo Checklist
 
-## Source of Truth
+Before a demo:
 
-Use branch `main`.
+1. run `bash scripts/demo-readiness-check.sh`
+2. run `bash scripts/demo-links.sh`
+3. confirm Paperless login works
+4. confirm MLflow loads
+5. confirm Grafana loads
+6. confirm MinIO console loads
+7. upload one known-good document
+8. verify generated tags in Paperless
+9. verify Grafana panels move
+10. verify MLflow shows recent runs
 
-If you are deploying this system again from scratch, clone `main`, create secrets, rebuild/import the images, and apply the Kubernetes manifests in the order described above.
+## 17. Quick Troubleshooting
 
+### Dashboard says “not found”
 
+- refresh the page
+- log in again to Grafana
+- verify the dashboard exists in the ConfigMap
+
+### Serving does not update
+
+- check the promoted bundle key
+- verify ONNX serving rollout status
+- inspect `deadline-onnx-serving` logs
+
+### Retraining does not trigger
+
+- inspect `retrain-pipeline` CronJob and latest job logs
+- verify feedback logs exist
+- verify `Action:Accept` / `Action:Reject` counts if used as trigger signals
+
+### Pod evictions / disk pressure
+
+- check root disk and attached volumes
+- prune stale images if necessary
+- verify stateful workloads are on durable storage
+
+## 18. Source of Truth
+
+Use `main` as the source-of-truth branch for the integrated system unless your
+team intentionally creates a review branch for ongoing work.
+
+For a fresh deployment:
+
+1. clone `main`
+2. choose Path A or Path B
+3. create secrets
+4. deploy the stack
+5. verify public URLs
+6. verify Paperless, MLflow, Grafana, and MinIO
