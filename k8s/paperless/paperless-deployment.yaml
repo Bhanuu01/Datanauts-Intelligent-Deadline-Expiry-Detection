@@ -72,6 +72,8 @@ spec:
               value: http://deadline-onnx-serving.ml.svc.cluster.local:8004/predict
             - name: ONLINE_FEATURES_FEEDBACK_URL
               value: http://online-features.ml.svc.cluster.local:8000/feedback
+            - name: ONLINE_FEATURES_ARCHIVE_URL
+              value: http://online-features.ml.svc.cluster.local:8000/archive-document
             - name: DEADLINE_RESULTS_DIR
               value: /usr/src/paperless/data/deadline-results
             - name: INFERENCE_TIMEOUT_SECONDS
