@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import base64
 import subprocess
 import sys
 import urllib.error
@@ -22,6 +23,10 @@ FEEDBACK_URL = os.getenv(
     "ONLINE_FEATURES_FEEDBACK_URL",
     "http://online-features.ml.svc.cluster.local:8000/feedback",
 )
+ARCHIVE_URL = os.getenv(
+    "ONLINE_FEATURES_ARCHIVE_URL",
+    "http://online-features.ml.svc.cluster.local:8000/archive-document",
+)
 INGEST_URL = os.getenv(
     "ONLINE_FEATURES_INGEST_URL",
     "http://online-features.ml.svc.cluster.local:8000/ingest",
@@ -32,6 +37,15 @@ ASYNC_ENABLED = os.getenv("DEADLINE_POST_CONSUME_ASYNC", "true").lower() in {"1"
 STATUS_REVIEW_TAG = "Status:Review Needed"
 FEEDBACK_CORRECT_TAG = "Action:Accept"
 FEEDBACK_WRONG_TAG = "Action:Reject"
+EVENT_PRIORITY = {
+    "deadline": 6,
+    "expiration": 5,
+    "renewal": 4,
+    "effective": 3,
+    "agreement": 2,
+    "notice_period": 1,
+    "unknown": 0,
+}
 
 
 def basic_auth_header() -> str:
@@ -134,17 +148,97 @@ def post_feedback(payload: Dict[str, Any]) -> None:
         return
 
 
+def archive_original_document(document_id: int, filename: str | None, original_path: str | None) -> None:
+    if not original_path:
+        return
+    path = Path(original_path)
+    if not path.exists() or not path.is_file():
+        return
+    payload = {
+        "document_id": str(document_id),
+        "filename": filename or path.name or f"document-{document_id}.pdf",
+        "content_type": "application/pdf",
+        "content_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+    }
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        ARCHIVE_URL,
+        data=data,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=60):
+        return
+
+
 def build_tags(result: Dict[str, Any]) -> List[str]:
     tags = []
-    if result.get("has_deadline"):
-        tags.append("Type:Deadline")
     if result.get("uncertain"):
         tags.append(STATUS_REVIEW_TAG)
 
-    for event in result.get("events", []):
+    selected_events = dedupe_events_by_date(result.get("events", []))
+    primary_event = select_primary_event(selected_events)
+    if primary_event is not None:
+        primary_label = str(primary_event.get("event_type", "unknown")).strip().lower() or "unknown"
+        tags.append(f"Type:{primary_label.replace('_', ' ').title()}")
+
+    for event in selected_events:
         tags.extend(build_event_tags(event))
 
     return sorted(set(tags))
+
+
+def event_sort_key(event: Dict[str, Any], normalized_date: str) -> tuple[int, float, float, str]:
+    event_type = str(event.get("event_type", "unknown")).strip().lower() or "unknown"
+    class_scores = event.get("class_scores") or {}
+    type_score = float(class_scores.get(event_type, 0.0))
+    confidence = float(event.get("confidence", 0.0) or 0.0)
+    priority = EVENT_PRIORITY.get(event_type, 0)
+    return (priority, confidence, type_score, normalized_date)
+
+
+def select_primary_event(events: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+    if not events:
+        return None
+    return max(events, key=lambda event: event_sort_key(event, str(event.get("deadline_date") or "")))
+
+
+def dedupe_events_by_date(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    selected_by_date: Dict[str, Dict[str, Any]] = {}
+    passthrough_events: List[Dict[str, Any]] = []
+
+    for event in events:
+        candidates = []
+        deadline_date = str(event.get("deadline_date") or "").strip()
+        if deadline_date:
+            candidates.append(deadline_date)
+        for candidate in event.get("date_candidates", []) or []:
+            candidate = str(candidate or "").strip()
+            if candidate:
+                candidates.append(candidate)
+
+        normalized_candidates: List[str] = []
+        seen_candidates = set()
+        for candidate in candidates:
+            normalized = normalize_deadline_date(candidate)
+            if normalized and normalized not in seen_candidates:
+                normalized_candidates.append(normalized)
+                seen_candidates.add(normalized)
+
+        if not normalized_candidates:
+            passthrough_events.append(event)
+            continue
+
+        for normalized in normalized_candidates:
+            current = selected_by_date.get(normalized)
+            if current is None or event_sort_key(event, normalized) > event_sort_key(current, normalized):
+                chosen = dict(event)
+                chosen["deadline_date"] = normalized
+                chosen["date_candidates"] = [normalized]
+                selected_by_date[normalized] = chosen
+
+    ordered_selected = [selected_by_date[key] for key in sorted(selected_by_date)]
+    return passthrough_events + ordered_selected
 
 
 def normalize_ocr_text_for_model(text: str) -> str:
@@ -329,7 +423,7 @@ def normalize_deadline_date(raw_date: str) -> str:
 def build_event_tags(event: Dict[str, Any]) -> List[str]:
     event_type = str(event.get("event_type", "unknown")).strip().lower() or "unknown"
     event_label = event_type.replace("_", " ").title()
-    tags = [f"Type:{event_label}"]
+    tags = []
 
     candidates = []
     deadline_date = (event.get("deadline_date") or "").strip()
@@ -344,7 +438,6 @@ def build_event_tags(event: Dict[str, Any]) -> List[str]:
     for candidate in candidates:
         normalized = normalize_deadline_date(candidate)
         if normalized and normalized not in seen:
-            tags.append(f"Deadline:{normalized}")
             tags.append(f"{event_label}:{normalized}")
             seen.add(normalized)
 
@@ -442,6 +535,7 @@ def main() -> int:
             return 0
 
         filename = document.get("original_file_name") or document.get("archived_file_name")
+        original_path = sys.argv[3] if len(sys.argv) > 3 else None
         try:
             post_ingest_event(
                 document_id=document_id,
@@ -452,6 +546,17 @@ def main() -> int:
         except Exception as exc:
             print(
                 f"Ingest capture failed for document {document_id}: {exc}",
+                file=sys.stderr,
+            )
+        try:
+            archive_original_document(
+                document_id=document_id,
+                filename=filename,
+                original_path=original_path,
+            )
+        except Exception as exc:
+            print(
+                f"Original PDF archive failed for document {document_id}: {exc}",
                 file=sys.stderr,
             )
 

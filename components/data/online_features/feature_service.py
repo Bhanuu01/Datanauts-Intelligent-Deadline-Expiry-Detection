@@ -2,6 +2,7 @@ import json
 import os
 import re
 import uuid
+import base64
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from prometheus_client import generate_latest
 from pydantic import BaseModel
 from starlette.responses import Response
 from components.common.object_store import object_store_enabled
+from components.common.object_store import upload_bytes
 from components.common.object_store import upload_json
 
 # Use simple sentence splitting instead of NLTK to avoid download issues
@@ -137,6 +139,14 @@ class FeedbackRequest(BaseModel):
     notes: str | None = None
 
 
+class ArchiveDocumentRequest(BaseModel):
+    document_id: str
+    filename: str = 'document.pdf'
+    content_base64: str
+    content_type: str = 'application/pdf'
+    timestamp: str | None = None
+
+
 def append_jsonl(path_str: str, payload: dict):
     path = Path(path_str)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,6 +171,19 @@ def upload_runtime_event(prefix_env: str, default_prefix: str, payload: dict):
     key = f'{prefix}/{timestamp}-{document_id}.json'
     upload_json(bucket, key, payload)
     OBJECT_STORE_MIRROR_SUCCESS.set(1)
+
+
+def upload_runtime_document(prefix_env: str, default_prefix: str, document_id: str, filename: str, payload: bytes, content_type: str):
+    if not object_store_enabled():
+        return None
+    bucket = os.getenv('RUNTIME_DOCUMENT_BUCKET', os.getenv('RUNTIME_LOG_BUCKET', 'datanauts-runtime'))
+    prefix = os.getenv(prefix_env, default_prefix).rstrip('/')
+    timestamp = datetime.utcnow().strftime('%Y/%m/%d/%H%M%S%f')
+    safe_name = re.sub(r'[^A-Za-z0-9._-]+', '_', filename).strip('._') or f'{document_id}.pdf'
+    key = f'{prefix}/{timestamp}-{document_id}-{safe_name}'
+    upload_bytes(bucket, key, payload, content_type=content_type)
+    OBJECT_STORE_MIRROR_SUCCESS.set(1)
+    return {"bucket": bucket, "key": key}
 
 def detect_section(s):
     for k, v in SECTIONS.items():
@@ -257,6 +280,25 @@ def feedback(req: FeedbackRequest):
     return {'status': 'recorded', 'document_id': req.document_id}
 
 
+@app.post('/archive-document')
+def archive_document(req: ArchiveDocumentRequest):
+    payload = base64.b64decode(req.content_base64.encode('ascii'))
+    result = upload_runtime_document(
+        'RUNTIME_DOCUMENT_S3_PREFIX',
+        'runtime/paperless/originals',
+        req.document_id,
+        req.filename,
+        payload,
+        req.content_type,
+    )
+    return {
+        'status': 'archived' if result else 'skipped',
+        'document_id': req.document_id,
+        'filename': req.filename,
+        'archive': result,
+    }
+
+
 @app.get('/metrics')
 def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
@@ -267,6 +309,7 @@ def data_quality_status():
     return {
         'dataset': 'tanvitakavane/datanauts_project_cuad-deadline-ner-version2',
         'runtime_log_bucket': os.getenv('RUNTIME_LOG_BUCKET', 'datanauts-runtime'),
+        'runtime_document_bucket': os.getenv('RUNTIME_DOCUMENT_BUCKET', os.getenv('RUNTIME_LOG_BUCKET', 'datanauts-runtime')),
         'object_store_endpoint': os.getenv('OBJECT_STORE_ENDPOINT_URL', ''),
         'evaluation_points': {
             'EP1_ingestion_quality': {
