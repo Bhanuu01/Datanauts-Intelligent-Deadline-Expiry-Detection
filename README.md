@@ -317,6 +317,12 @@ Expected Paperless tags include:
 - `Action:Reject`
 
 ## 10. Data Flow
+Container:
+1. cuad-data-proj11-v2 : https://chi.tacc.chameleoncloud.org/project/containers/container/cuad-data-proj11-v2
+This consisted of entire phase 1 implementation. It is kept active as phase 1 submission is linked with this container.
+
+2. object_storage_proj11 : https://chi.tacc.chameleoncloud.org/project/containers/container/object_storage_proj11
+This is our final container consisting of all files from phase 1 and final implementation too.
 
 ### 10.1. Online Ingest Flow
 
